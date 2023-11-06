@@ -1,0 +1,1 @@
+# solo-project-ai-ml
