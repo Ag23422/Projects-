@@ -1,1 +1,26 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+import geo.py as gps
+API_KEY = "AkvYaDkG40h_rbg-DIGhsap7cxZic5v4GUlAWqeAMkZ1prAuXXx_TLRUGCrb-Uiv"  # Replace with your Bing Maps API key
+
+geolocator = geopy.geocoders.Bing(AkvYaDkG40h_rbg-DIGhsap7cxZic5v4GUlAWqeAMkZ1prAuXXx_TLRUGCrb-Uiv)
+
+dataset=pd.read_csv("locations.csv")
+
+b=input("enter the location name ")
+for b in dataset.iloc[:, :3]
+c=dataset.iloc[:, :4]
+
+X = dataset.iloc[:, 2:3].values
+y = dataset.iloc[:, 4].values
+
+from sklearn.datasets import make_blobs
+X, y = make_blobs(100, 2, centers=2, random_state=2, cluster_std=1.5)
+plt.scatter(X[:, 0], X[:, 1], c, s=50, cmap='RdBu');
+
+from sklearn.preprocessing import StandardScaler
+sc = StandardScaler()
+X_train = sc.fit_transform(X_train)
+X_test = sc.transform(X_test)
 
