@@ -3,8 +3,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-from sklearn.datasets import fetch_openml
-annu= fetch_openml(name="house_prices", as_frame=True)
+import geo.py as gps
+API_KEY = "AkvYaDkG40h_rbg-DIGhsap7cxZic5v4GUlAWqeAMkZ1prAuXXx_TLRUGCrb-Uiv"  # Replace with your Bing Maps API key
 
-import map.py as pp
+geolocator = geopy.geocoders.Bing(AkvYaDkG40h_rbg-DIGhsap7cxZic5v4GUlAWqeAMkZ1prAuXXx_TLRUGCrb-Uiv)
+
+
+
 
