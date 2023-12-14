@@ -47,17 +47,16 @@ for c in dataset.iloc[2:3,1].values:
         wcss.append(kmeans.inertia_)
         kmeans = KMeans(n_clusters = 5, init = 'k-means++', random_state = 42)
         m=kmeans.fit_predict(X)
-        plt.scatter(X[ m== 0, 0], X[m==0, 1], s = 100, c = 'red', label = 'Cluster 1')
-        plt.scatter(X[m== 1, 0], X[m== 1, 1], s = 100, c = 'blue', label = 'Cluster 2')
-        plt.scatter(X[ m==2, 0], X[m== 2, 1], s = 100, c = 'green', label = 'Cluster 3')
-        plt.scatter(X[ m==3, 0], X[m==3, 1], s = 100, c = 'cyan', label = 'Cluster 4')
+  print(m)
 
+yt=input('if property is already selected and not in the given list.put the amount of the poperty :')
 d=input('enter the preffered propetry amount: ')
+k=input('the loan amount required: ')
 e=input('enter your gender: ')
 g=input('enter your no of dependents : ')
 f=input('no of working indivisuals : ')
 h=input('total household income : ')
-k=input('the loan amount required: ')
+
 i={e,g,f,h,k}
 
 j=dataset2.iloc[:, 11]
@@ -65,15 +64,14 @@ o = dataset2.iloc[:, :-1].values
 p = dataset2.iloc[:, -1].values
 
 q=input('tenure of loan amount(no of years) : ')
-
-bank_df = pd.read_csv(".csv")
+bank_df = pd.read_csv("loan_sanction_test.csv")
 
 
 
 from tensorflow.keras.utils import to_categorical
 
 X = bank_df.drop(columns=[""])
-y = bank_df["Personal Loan"]
+y = bank_df[" Loan"]
 
 y = to_categorical(y)
 
@@ -135,6 +133,8 @@ def f1_m(y_true, y_pred):
     precision = precision_m(y_true, y_pred)
     recall = recall_m(y_true, y_pred)
     return 2*((precision*recall)/(precision+recall+K.epsilon()))
+
+
 y = y.reshape((y.shape[0], 1))
 
 predictions = ann_model.predict(y)
