@@ -1,3 +1,4 @@
+from warnings import filterwarnings
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -20,34 +21,41 @@ dataset = pd.read_csv('realtor-data.zip.csv')
 dataset2= pd.read_csv('test.csv')
 
 
-
 a = input("what is your monthley income ")
-b= input ("type of property required (enter the no of beds required)")
+b= input("type of property required (enter the no of beds required)")
 c=12*int(a)
 print(c)
 X= dataset.iloc[:, 1:].values
-y = dataset.iloc [:,1].values
+y = dataset.iloc [:,2:3].values
 z=dataset.iloc[:,1].values
+dataset.drop("status",axis=1,inplace=True)
+dataset.drop("city",axis=1,inplace=True)
+dataset.drop("state",axis=1,inplace=True)
 
+from sklearn.impute import SimpleImputer
 
-for c in dataset.iloc[2:3,1].values:
+imputer = SimpleImputer(strategy="mean")
+y= imputer.fit_transform(y)
+
+for c in dataset.iloc[:,2:3].values:
   if(c<=z.all()):
     from sklearn.cluster import KMeans
     wcss = []
-    for i in range(1, 90877):
+    for i in range(1, 11):
       kmeans = KMeans(n_clusters = i, init = 'k-means++', random_state = 42)
-    kmeans.fit(X)
-    wcss.append(kmeans.inertia_)
-  if (int(b)==y.all()):
-       from sklearn.cluster import KMeans
-       wcss = []
-       for i in range(1, 90877):
+      kmeans.fit(y)
+      wcss.append(kmeans.inertia_)
+  if (b==y.all()):
+      from sklearn.cluster import KMeans
+      wcss = []
+      for i in range(1, 11):
         kmeans = KMeans(n_clusters = i, init = 'k-means++', random_state = 42)
-        kmeans.fit(X)
+        kmeans.fit(y)
         wcss.append(kmeans.inertia_)
         kmeans = KMeans(n_clusters = 5, init = 'k-means++', random_state = 42)
-        m=kmeans.fit_predict(X)
-  print(m)
+        m = kmeans.fit_predict(y)
+      predictions = kmeans.predict(y)
+      print(y[predictions == 0])
 
 yt=input('if property is already selected and not in the given list.put the amount of the poperty :')
 d=input('enter the preffered propetry amount: ')
@@ -59,32 +67,26 @@ h=input('total household income : ')
 
 i={e,g,f,h,k}
 
-j=dataset2.iloc[:, 11]
+j=dataset2.iloc[:, 7:11]
 o = dataset2.iloc[:, :-1].values
 p = dataset2.iloc[:, -1].values
 
 q=input('tenure of loan amount(no of years) : ')
-bank_df = pd.read_csv("loan_sanction_test.csv")
+    
 
 
 
-from tensorflow.keras.utils import to_categorical
-
-X = bank_df.drop(columns=[""])
-y = bank_df[" Loan"]
-
-y = to_categorical(y)
 
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.model_selection import train_test_split
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1)
+j_train, j_test, o_train, o_test = train_test_split(j, o, test_size=0.1)
 
 sc = StandardScaler()
-X_train = sc.fit_transform(X_train)
-X_test = sc.transform(X_test)
+j_train = sc.fit_transform(j_train)
+j_test = sc.transform(j_test)
 
-X_train.shape, X_test.shape, y_train.shape, y_test.shape
+j_train.shape, j_test.shape, o_train.shape, o_test.shape
 
 
 
@@ -117,27 +119,32 @@ ann_model.summary()
 
 from keras import backend as K
 
-def recall_m(y_true, y_pred):
-    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
-    possible_positives = K.sum(K.round(K.clip(y_true, 0, 1)))
+def recall_m(o_true, o_pred):
+    true_positives = K.sum(K.round(K.clip(o_true * o_pred, 0, 1)))
+    possible_positives = K.sum(K.round(K.clip(o_true, 0, 1)))
     recall = true_positives / (possible_positives + K.epsilon())
     return recall
 
-def precision_m(y_true, y_pred):
-    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
-    predicted_positives = K.sum(K.round(K.clip(y_pred, 0, 1)))
+def precision_m(o_true, o_pred):
+    true_positives = K.sum(K.round(K.clip(o_true * o_pred, 0, 1)))
+    predicted_positives = K.sum(K.round(K.clip(o_pred, 0, 1)))
     precision = true_positives / (predicted_positives + K.epsilon())
     return precision
 
-def f1_m(y_true, y_pred):
-    precision = precision_m(y_true, y_pred)
-    recall = recall_m(y_true, y_pred)
+def f1_m(o_true, o_pred):
+    precision = precision_m(o_true, o_pred)
+    recall = recall_m(o_true, o_pred)
     return 2*((precision*recall)/(precision+recall+K.epsilon()))
 
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder
+ct1 = ColumnTransformer(transformers=[('Male', OneHotEncoder(), [0])], remainder='passthrough')
+n = np.array(ct1.fit_transform(o))
+ct2 = ColumnTransformer(transformers=[('Female', OneHotEncoder(), [1])], remainder='passthrough')
+n = np.array(ct2.fit_transform(o))
 
-y = y.reshape((y.shape[0], 1))
-
-predictions = ann_model.predict(y)
+tf.convert_to_tensor(o)
+predictions = ann_model.predict(o)
 predict = []
 
 for i in predictions:
