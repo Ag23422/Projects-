@@ -27,7 +27,7 @@ c=12*int(a)
 print(c)
 X= dataset.iloc[:, 1:].values
 y = dataset.iloc [:,2:3].values
-z=dataset.iloc[:,1].values
+z=dataset.iloc[:,:-1].values
 dataset.drop("status",axis=1,inplace=True)
 dataset.drop("city",axis=1,inplace=True)
 dataset.drop("state",axis=1,inplace=True)
@@ -45,7 +45,7 @@ for c in dataset.iloc[:,2:3].values:
       kmeans = KMeans(n_clusters = i, init = 'k-means++', random_state = 42)
       kmeans.fit(y)
       wcss.append(kmeans.inertia_)
-  if (b==y.all()):
+  if (int(b)==y.all()):
       from sklearn.cluster import KMeans
       wcss = []
       for i in range(1, 11):
