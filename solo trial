@@ -21,9 +21,9 @@ geolocator = gps.geocoders.Bing('AkvYaDkG40h_rbg-DIGhsap7cxZic5v4GUlAWqeAMkZ1prA
 dataset = pd.read_csv('realtor-data.zip.csv')
 dataset2= pd.read_csv('test.csv')
 
+print(dataset)
 yt=input('if property is already selected and not in the given list.put the amount of the poperty :')
-d=input('enter the preffered propetry amount: ')
-
+d=input('enter the your propetry buget(after taking out  loan )  : ')
 
 
 j=dataset.iloc[:, :10]
@@ -54,9 +54,7 @@ X[:, 10] = le.transform(X[:, 10])
 
 le.fit(X[:, 2])
 X[:, 2] = le.transform(X[:, 2])
-
-for p in dataset.iloc[:,6:7].values:
-  if (j<=o.all()):
+if (d<=j.all()):
     from sklearn.cluster import KMeans
     wcss = []
     for i in range(1, 11):
@@ -66,7 +64,7 @@ for p in dataset.iloc[:,6:7].values:
       m = kmeans.fit_predict(o)
       predictions = kmeans.predict(o)
       print(o[predictions == 0])
-k=print (prediction[:,:-1])
+
 zips[k] = zips[k].apply(lambda x: str(k)[0:2])
 
 import folium
@@ -92,6 +90,7 @@ for i in range(len(df)):
 
 # Same as before, we save it to file
 m.save('circle_map.html')
+#start
 
 a = int(input("what is your monthley income "))
 b= int(input("type of property required (enter the no of beds required)"))
