@@ -20,6 +20,52 @@ geolocator = gps.geocoders.Bing('AkvYaDkG40h_rbg-DIGhsap7cxZic5v4GUlAWqeAMkZ1prA
 dataset = pd.read_csv('realtor-data.zip.csv')
 dataset2= pd.read_csv('test.csv')
 
+yt=input('if property is already selected and not in the given list.put the amount of the poperty :')
+d=input('enter the preffered propetry amount: ')
+
+
+
+j=dataset.iloc[:, :10]
+o = dataset.iloc[:,1:].values
+p = dataset.iloc[:, :7].values
+
+#replace the X with the specific coloumn and add worl coordinates
+
+from sklearn.preprocessing import LabelEncoder
+le = LabelEncoder()
+le.fit(X[:, 0])
+X[:, 0] = le.transform(X[:, 0])
+
+le.fit(X[:, 1])
+X[:, 1] = le.transform(X[:, 1])
+  
+
+  
+le.fit(X[:, 3])
+X[:, 3] = le.transform(X[:, 3])
+
+  
+le.fit(X[:, 4])
+X[:, 4] = le.transform(X[:, 4])
+
+le.fit(X[:, 10])
+X[:, 10] = le.transform(X[:, 10])
+
+le.fit(X[:, 2])
+X[:, 2] = le.transform(X[:, 2])
+
+for p in dataset.iloc[:,6:7].values:
+  if (j<=o.all()):
+    from sklearn.cluster import KMeans
+    wcss = []
+    for i in range(1, 11):
+      kmeans = KMeans(n_clusters = i, init = 'k-means++', random_state = 42)
+      kmeans.fit(o)
+      kmeans = KMeans(n_clusters = 5, init = 'k-means++', random_state = 42)
+      m = kmeans.fit_predict(o)
+      predictions = kmeans.predict(o)
+      print(o[predictions == 0])
+
 
 a = int(input("what is your monthley income "))
 b= int(input("type of property required (enter the no of beds required)"))
@@ -37,24 +83,43 @@ input("Enter 'yes' to confirm if above information is correct: ").lower() in ["y
 
 X= dataset2.iloc[:, 1:].values
 
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OneHotEncoder
-ct1 = ColumnTransformer(transformers=[('Gender', OneHotEncoder(), [0])], remainder='passthrough')
-n1 = np.array(ct1.fit_transform(X))
-ct2 = ColumnTransformer(transformers=[('Married', OneHotEncoder(), [1])], remainder='passthrough')
-n2 = np.array(ct2.fit_transform(X))
-#ct3 = ColumnTransformer(transformers=[('Yes', OneHotEncoder(), [1])], remainder='passthrough')
-#n3 = np.array(ct2.fit_transform(X))
-#ct4 = ColumnTransformer(transformers=[('No', OneHotEncoder(), [1])], remainder='passthrough')
-#n4= np.array(ct2.fit_transform(X))
 
+from sklearn.preprocessing import LabelEncoder
+le = LabelEncoder()
+le.fit(X[:, 0])
+X[:, 0] = le.transform(X[:, 0])
+
+le.fit(X[:, 1])
+X[:, 1] = le.transform(X[:, 1])
+
+le.fit(X[:, 2])
+X[:, 2] = le.transform(X[:, 2])
+
+le.fit(X[:, 3])
+X[:, 3] = le.transform(X[:, 3])
+
+le.fit(X[:, 4])
+X[:, 4] = le.transform(X[:, 4])
+
+le.fit(X[:, 10])
+X[:, 10] = le.transform(X[:, 10])
+
+from sklearn.impute import SimpleImputer
+imputer = SimpleImputer(missing_values=np.nan, strategy='mean')
+imputer.fit(X[:, 1:])
+X[:, 1:] = imputer.transform(X[:, 1:])
 
 
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.model_selection import train_test_split
 
+X_train, X_test=  train_test_split(X,test_size=0.22)
+sc = StandardScaler()
+X_train = sc.fit_transform(X_train)
+X_test = sc.transform(X_test)
+X_train.shape, X_test.shape
 
-for E in dataset.iloc[:,1:].values:
+for W in dataset.iloc[:,1:].values:
   sc = StandardScaler()
   ann_model = keras.Sequential()
 
@@ -93,37 +158,33 @@ for E in dataset.iloc[:,1:].values:
     precision = precision_m(X_true, X_pred)
     recall = recall_m(X_true, X_pred)
     return 2*((precision*recall)/(precision+recall+K.epsilon()))
+  
 
   from sklearn.preprocessing import LabelEncoder
   le = LabelEncoder()
   le.fit(X[:, 0])
   X[:, 0] = le.transform(X[:, 0])
-  ann_model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=[f1_m])
 
-  le = LabelEncoder()
   le.fit(X[:, 1])
   X[:, 1] = le.transform(X[:, 1])
-  ann_model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=[f1_m])
+  
 
-  le = LabelEncoder()
+  
   le.fit(X[:, 3])
   X[:, 3] = le.transform(X[:, 3])
-  ann_model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=[f1_m])
 
-  le = LabelEncoder()
+  
   le.fit(X[:, 4])
   X[:, 4] = le.transform(X[:, 4])
-  ann_model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=[f1_m])
 
-  le = LabelEncoder()
   le.fit(X[:, 10])
   X[:, 10] = le.transform(X[:, 10])
-  ann_model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=[f1_m])
-  le = LabelEncoder()
 
   le.fit(X[:, 2])
   X[:, 2] = le.transform(X[:, 2])
   ann_model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=[f1_m])
+
+  ann_model.fit(X_train,batch_size=100)
 
   X = np.array(X).astype('float32')
   predictions = tf.convert_to_tensor(X)
@@ -132,37 +193,6 @@ for E in dataset.iloc[:,1:].values:
 for i in predictions:
     predict.append(np.argmax(i))
 
-
-
-
-
-yt=input('if property is already selected and not in the given list.put the amount of the poperty :')
-d=input('enter the preffered propetry amount: ')
-
-
-j=dataset.iloc[:, 7:11]
-o = dataset.iloc[:, :-1].values
-p = dataset.iloc[:, -1].values
-
-
-for W in dataset.iloc[:,6:7].values:
-  if (a==z.all()):
-    from sklearn.cluster import KMeans
-    wcss = []
-    for i in range(1, 11):
-      kmeans = KMeans(n_clusters = i, init = 'k-means++', random_state = 42)
-      kmeans.fit(y)
-  if (W==X.all()):
-    from sklearn.cluster import KMeans
-    wcss = []
-    for i in range(1, 11):
-      kmeans = KMeans(n_clusters = i, init = 'k-means++', random_state = 42)
-      kmeans.fit(y)
-      wcss.append(kmeans.inertia_)
-      kmeans = KMeans(n_clusters = 5, init = 'k-means++', random_state = 42)
-      m = kmeans.fit_predict(y)
-      predictions = kmeans.predict(y)
-      print(y[predictions == 0])
 
 
 
