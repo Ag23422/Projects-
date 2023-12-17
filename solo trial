@@ -10,6 +10,7 @@ from tensorflow.keras.layers import Dense, Activation, Dropout
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.metrics import Accuracy
 import matplotlib.pyplot as plt
+from PIL import Image, ImageDraw
 
 API_KEY = "AkvYaDkG40h_rbg-DIGhsap7cxZic5v4GUlAWqeAMkZ1prAuXXx_TLRUGCrb-Uiv"  # Replace with your Bing Maps API key
 
@@ -65,7 +66,32 @@ for p in dataset.iloc[:,6:7].values:
       m = kmeans.fit_predict(o)
       predictions = kmeans.predict(o)
       print(o[predictions == 0])
+k=print (prediction[:,:-1])
+zips[k] = zips[k].apply(lambda x: str(k)[0:2])
 
+import folium
+
+# grab the center of our map using our cool function
+center = get_center_latlong(df)
+
+# create a new map object
+m = folium.Map(location=center, zoom_start=10)
+
+# save our map to an interactive html file
+m.save('circle_map.html')
+# Same as before, we get the center and make the map object
+center = get_center_latlong(df)
+m = folium.Map(location=center, zoom_start=10)
+
+# go through each home in set, make circle, and add to map.
+for i in range(len(df)):
+    folium.Circle(
+        location=[df.iloc[i]['lat'], df.iloc[i]['long']],
+        radius=10,
+    ).add_to(m)
+
+# Same as before, we save it to file
+m.save('circle_map.html')
 
 a = int(input("what is your monthley income "))
 b= int(input("type of property required (enter the no of beds required)"))
