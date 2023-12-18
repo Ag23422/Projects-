@@ -2,9 +2,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import geo.py as gps
-API_KEY = "AkvYaDkG40h_rbg-DIGhsap7cxZic5v4GUlAWqeAMkZ1prAuXXx_TLRUGCrb-Uiv"  # Replace with your Bing Maps API key
+import face_recognition
+API_KEY = ""  # Replace with your Bing Maps API key
 
 geolocator = geopy.geocoders.Bing(AkvYaDkG40h_rbg-DIGhsap7cxZic5v4GUlAWqeAMkZ1prAuXXx_TLRUGCrb-Uiv)
+
+known_image = face_recognition.load_image_file(".jpg")
+unknown_image = face_recognition.load_image_file("unknown.jpg")
+
+biden_encoding = face_recognition.face_encodings(known_image)[0]
+unknown_encoding = face_recognition.face_encodings(unknown_image)[0]
+
+results = face_recognition.compare_faces([biden_encoding], unknown_encoding)
+
+
 
 dataset=pd.read_csv("locations.csv")
 
@@ -30,22 +41,37 @@ classifier.fit(X_train, y_train)
 
 print(classifier.predict(sc.transform(c)))
 
+def location(bot, update):
+    message = None
+    if update.edited_message:
+        message = update.edited_message
+    else:
+        message = update.message
+    current_pos = (message.location.latitude, message.location.longitude)
 
-import requests
-import json
+location_handler = MessageHandler(Filters.location, location)
+dispatcher.add_handler(location_handler)
 
-google_key = 'AkvYaDkG40h_rbg-DIGhsap7cxZic5v4GUlAWqeAMkZ1prAuXXx_TLRUGCrb-Uiv'
-block_name =input('enter the name of the block')
-lat_lng = pd.read_csv('')
+import folium
 
-base_url = 'https://maps.bingmapsapis.com/maps/api/place/textsearch/json'
-params = '?location=' + lat_lng + '&query=' + block_name + '&radius=10&key=' + google_key
-url = base_url + params
+# grab the center of our map using our cool function
+center = get_center_latlong(df)
 
-headers = {
-  'Accept': 'application/json'
-}
+# create a new map object
+m = folium.Map(location=center, zoom_start=10)
 
-response = requests.request('GET', url, headers=headers, data={})
-json_response = json.loads(response.text)
-print(json_response['results'][0]['formatted_address'])
+# save our map to an interactive html file
+m.save('circle_map.html')
+# Same as before, we get the center and make the map object
+center = get_center_latlong(df)
+m = folium.Map(location=center, zoom_start=10)
+
+# go through each home in set, make circle, and add to map.
+for i in range(len(df)):
+    folium.Circle(
+        location=[df.iloc[i]['lat'], df.iloc[i]['long']],
+        radius=10,
+    ).add_to(m)
+
+# Same as before, we save it to file
+m.save('circle_map.html')
