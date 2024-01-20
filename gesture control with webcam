@@ -2,77 +2,84 @@ import cv2
 import mediapipe as mp
 
 
-def count_fingers(lst):
-    cnt = 0
-
-    thresh = (lst.landmark[0].y * 100 - lst.landmark[9].y * 100) / 2
-
-    if (lst.landmark[5].y * 100 - lst.landmark[8].y * 100) > thresh:
-        cnt += 1
-    if (lst.landmark[9].y * 100 - lst.landmark[12].y * 100) > thresh:
-        cnt += 1
-    if (lst.landmark[13].y * 100 - lst.landmark[16].y * 100) > thresh:
-        cnt += 1
-    if (lst.landmark[17].y * 100 - lst.landmark[20].y * 100) > thresh:
-        cnt += 1
-    if (lst.landmark[5].y * 100 - lst.landmark[4].y * 100) > 5:
-        cnt += 1
-    return cnt
-
+mp_drawing = mp.solutions.drawing_utils
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(static_image_mode=False, min_detection_confidence=0.5, min_tracking_confidence=0.5)
 
 cap = cv2.VideoCapture(0)
-drawing = mp.solutions.drawing_utils
-hands = mp.solutions.hands
-hand_obj = hands.Hands(max_num_hands=1)
+
+gestures = {
+    "fist": "play",
+    "palm": "pause",
+    "index finger": "load",
+    "thumb": "fire"
+}
+
+
+player = cv2.VideoCapture("/home/ansh/PycharmProjects/pythonProject/WhatsApp Video 2024-01-19 at 21.22.45.mp4")
 
 while True:
-    _, frm = cap.read()
+    ret, frame = cap.read()
 
-    frm = cv2.flip(frm, 1)
-    res = hand_obj.process(cv2.cvtColor(frm, cv2.COLOR_RGB2HLS))
+    frame = cv2.flip(frame, 1)
 
-    if res.multi_hand_landmarks:
-        drawing.draw_landmarks(frm, res.multi_hand_landmarks[0], hands.HAND_CONNECTIONS)
+    
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        hand_KeyPoints = res.multi_hand_landmarks[0]
+    
+    results = hands.process(frame_rgb)
 
-        cnt = count_fingers(hand_KeyPoints)
+    if results.multi_hand_landmarks:
+        for hand_landmarks in results.multi_hand_landmarks:
+            mp_drawing.draw_landmarks(
+                frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
-    cv2.imshow("Window", frm)
+        
+            landmarks = hand_landmarks.landmark
 
-    if cv2.waitKey(1) == 27:
-        cv2.destroyAllwindow()
-        cap.release()
-        break
+            
+            tip_ids = [4, 8, 12, 16, 20]
+            x_values = [landmarks[id].x for id in tip_ids]
+            y_values = [landmarks[id].y for id in tip_ids]
+            thumb_tip_x = landmarks[4].x
+            index_tip_x = landmarks[8].x
+            middle_tip_x = landmarks[12].x
+            ring_tip_x = landmarks[16].x
+            pinky_tip_x = landmarks[20].x
 
-video_capture = cv2.VideoCapture('/home/ansh/Downloads/WhatsApp Video 2024-01-19 at 21.22.45.mp4')
-width = int(video_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-height = int(video_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-video_writer = cv2.VideoWriter('output_file.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 30, (width, height))
+           
+            if all(x > 0.5 for x in x_values) and all(y < 0.3 for y in y_values):
+                gesture = "thumbs_up"
+            elif all(x > 0.5 for x in x_values) and all(y > 0.7 for y in y_values):
+                gesture = "thumbs_down"
+            elif index_tip_x > middle_tip_x and thumb_tip_x < index_tip_x:
+                gesture = "left_swipe"
+            elif index_tip_x < middle_tip_x and thumb_tip_x > index_tip_x:
+                gesture = "right_swipe"
+            else:
+                gesture = None
 
-while True:
-    ret, frame = video_capture.read()
+            
+            if gesture:
+                action = gestures.get(gesture)
+                if action == "play":
+                    player.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    player.set(cv2.CAP_PROP_POS_AVI_RATIO, 0)
+                elif action == "pause":
+                    player.set(cv2.CAP_PROP_POS_FRAMES, player.get(cv2.CAP_PROP_POS_FRAMES))
+                elif action == "rewind":
+                    player.set(cv2.CAP_PROP_POS_FRAMES, max(0, player.get(cv2.CAP_PROP_POS_FRAMES) - 100))
+                elif action == "fast_forward":
+                    player.set(cv2.CAP_PROP_POS_FRAMES, min(player.get(cv2.CAP_PROP_FRAME_COUNT), player.get(cv2.CAP_PROP_POS_FRAMES) + 100))
 
-    ret_webcam, webcam_frame = webcaml_capture.read()
+ 
+    cv2.imshow('Hand Gesture Control', frame)
 
-    if not ret:
-        break
-
-    if not ret_webcam:
-        break
-
-    webcam_frame = cv2.resize(webcam_frame, (width, height))
-
-    frame = cv2.hconcat([frame, webcam_frame])
-
-    video_writer.write(frame)
-
-    cv2.imshow('frame', frame)
-
+   
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
-video_capture.release()
-video_writer.release()
 
+cap.release()
+player.release()
 cv2.destroyAllWindows()
