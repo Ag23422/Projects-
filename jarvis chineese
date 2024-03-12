@@ -1,0 +1,127 @@
+import os
+from random import choice
+import subprocess
+import pyttsx3
+from speech_recognition import Recognizer, AudioFile
+from decouple import config
+from datetime import datetime
+import pyaudio
+import wave
+
+
+
+USERNAME = config('USER')
+BOTNAME = config('BOTNAME')
+
+def speak(text):
+    """Used to speak whatever text is passed to it"""
+    engine = pyttsx3.init('espeak')
+    engine.setProperty('rate', 190)
+    engine.setProperty('volume', 1.0)
+    voices = engine.getProperty('voices')
+    engine.setProperty('voice', voices[1].id)
+    engine.say(text)
+    engine.runAndWait()
+
+def greet_user():
+    """Greets the user according to time """
+    hour = datetime.now().hour
+    if (hour >= 6) and (hour < 12):
+        speak(f"Good Morning {USERNAME}")
+    elif (hour >= 12) and (hour < 16):
+        speak(f"Good Afternoon {USERNAME}")
+    elif (hour >= 16) and (hour < 19):
+        speak(f"Good Evening {USERNAME}")
+    speak(f"I am {BOTNAME}. How may I assist you")
+
+def take_user_input():
+    
+# Set the audio format
+    FORMAT = pyaudio.paInt16
+    CHANNELS = 1
+    RATE = 44100
+    CHUNK = 1024
+    RECORD_SECONDS = 5
+    WAVE_OUTPUT_FILENAME = "output.wav"
+
+# Initialize the audio interface
+    audio = pyaudio.PyAudio()
+
+# Open the microphone stream
+    stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE,
+                    input=True, frames_per_buffer=CHUNK)
+
+    print("Recording...")
+
+# Record audio for a few seconds
+    frames = []
+    for i in range(0, int(RATE / CHUNK * RECORD_SECONDS)):
+        data = stream.read(CHUNK)
+        frames.append(data)
+
+# Stop the stream
+    stream.stop_stream()
+    stream.close()
+    audio.terminate()
+
+# Save the audio data to a WAV file
+    wf = wave.open('user_input.wav', 'wb')
+    wf.setnchannels(CHANNELS)
+    wf.setsampwidth(audio.get_sample_size(FORMAT))
+    wf.setframerate(RATE)
+    wf.writeframes(b''.join(frames))
+    wf.close()
+
+    print("Recording finished.")
+    """Takes user input, recognises it using Speech Recognition module and converts it to text"""
+    recognizer = Recognizer()
+    with AudioFile('user_input.wav') as source:
+        print('Listening.....')
+        audio = recognizer.record(source)
+    try:
+        print('Recognizing...')
+        query = recognizer.recognize_google(audio, language='en-in')
+        if not ('exit' in query or 'stop' in query):
+            speak(choice(['Hello', 'Hi', 'Hey']))
+        else:
+            hour = datetime.now().hour
+            if (hour >= 21) and (hour < 16):
+                speak(f"Good Night sir take care!")
+            else:
+                speak('Have a good day sir!')
+    except Exception:
+        speak('Sorry, I could not understand. Could you please say that again?')
+        query = 'None'
+    return query
+
+def open_camera():
+    subprocess.run(['start', '-v', '/dev/video'], shell=True)
+
+def open_chrome():
+    subprocess.run(['start', paths['chrome']], shell=True)
+
+def open_Tlauncher():
+    subprocess.run(['start', paths['Tlauncher']], shell=True)
+
+def open_spotify():
+    subprocess.run(['start', paths['spotify']], shell=True)
+
+def main():
+    greet_user()
+    while True:
+        query = take_user_input()
+        if query.lower() == 'exit':
+            break
+        elif 'open chrome' in query.lower():
+            open_chrome()
+        elif 'open spotify' in query.lower():
+            open_spotify()
+        elif 'open Tlauncher' in query.lower():
+            open_Tlauncher()
+        elif 'open camera' in query.lower():
+            open_camera()
+        else:
+            speak('Sorry, I could not understand. Could you please say that again?')
+
+if __name__ == '__main__':
+    main()
