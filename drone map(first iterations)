@@ -1,0 +1,209 @@
+
+import numpy as np
+import time
+import math
+import dronekit
+import RPi.GPIO as GPIO
+import cv2  
+import boto3 
+import threading
+
+
+vehicle = dronekit.connect('udp:127.0.0.1:14550', wait_ready=True)
+location = vehicle.location.global_frame
+start_lat = location.lat
+start_lon = location.lon
+R = 6371.0
+ACCEL_XOUT_H = 0x3B
+ACCEL_YOUT_H = 0x3D
+ACCEL_ZOUT_H = 0x3F
+GYRO_YOUT_H = 0x45
+area_width = 63.61
+area_length = 63.61
+altitude = 15
+overlap = 0.7
+
+num_orbits = 3
+base_x = 0
+base_y = altitude
+
+s3_client = boto3.client('s3', 
+                          aws_access_key_id='YOUR_AWS_ACCESS_KEY',
+                          aws_secret_access_key='YOUR_AWS_SECRET_KEY',
+                          region_name='YOUR_AWS_REGION')
+
+bucket_name = 'your-bucket-name'
+
+GPIO.setmode(GPIO.BCM)
+trig = 12
+echo = 10
+GPIO.setup(trig, GPIO.OUT)
+GPIO.setup(echo, GPIO.IN)
+
+current_pattern = "elliptical"  
+def capture_and_upload():
+    camera = cv2.VideoCapture(0)
+    if not camera.isOpened():
+        print("Error: Camera not accessible.")
+        return
+
+    while True:
+        ret, frame = camera.read()
+        if ret:
+            image_path = f"captured_image_{int(time.time())}.jpg"
+            cv2.imwrite(image_path, frame)
+            upload_image_to_s3(image_path)
+        time.sleep(1)
+
+def upload_image_to_s3(image_path):
+    try:
+        s3_client.upload_file(image_path, bucket_name, image_path)
+        print(f"Uploaded {image_path} to {bucket_name}")
+    except Exception as e:
+        print(f"Failed to upload {image_path} to S3: {e}")
+
+def close_camera(camera):
+    camera.release()
+    print("Camera closed.")
+
+def is_drone_away_from_base(current_location, base_location, threshold=0.0001):
+    return (abs(current_location.lat - base_location[0]) > threshold or
+            abs(current_location.lon - base_location[1]) > threshold)
+
+def obstacle_distance():
+    GPIO.output(trig, True)
+    time.sleep(0.001)
+    GPIO.output(trig, False)
+    while GPIO.input(echo) == 0:
+        pulse_start = time.time()
+    while GPIO.input(echo) == 1:
+        pulse_end = time.time()
+    return (pulse_end - pulse_start) * 17150
+
+def read_sensor_data():
+    msg = vehicle.recv_match(type='ATTITUDE', blocking=True)
+    return msg.roll, msg.pitch, msg.yaw
+
+def get_yaw():
+    roll, pitch, yaw = read_sensor_data()
+    return yaw
+
+def get_pitch():
+    roll, pitch, yaw = read_sensor_data()
+    return pitch
+
+def avoidance():
+    distance = obstacle_distance()
+    if distance < 30:
+        print("Obstacle detected! Executing avoidance maneuver.")
+        new_pitch = get_pitch() - 10
+        new_yaw = get_yaw() + 30
+        vehicle.mode = dronekit.VehicleMode("GUIDED")
+        vehicle.simple_goto(vehicle.location.global_frame.lat, vehicle.location.global_frame.lon + 0.0001)
+
+def meters_to_degrees(lat, lon, meters):
+    lat_factor = 1 / 111000
+    lon_factor = 1 / (111000 * np.cos(np.radians(lat)))
+    return meters * lat_factor, meters * lon_factor
+
+def generate_zigzag_with_capture(area_width, area_length, overlap):
+    step = 10 * (1 - overlap)
+    step_lat, step_lon = meters_to_degrees(start_lat, start_lon, area_width)
+    lat_coords = []
+    lon_coords = []
+
+    for i in range(int(area_length / step) + 1):
+        curr_lat = start_lat + (i * step_lat)
+        if i % 2 == 0:
+            for j in range(int(area_width / step) + 1):
+                curr_lon = start_lon + (j * step_lon)
+                lat_coords.append(curr_lat)
+                lon_coords.append(curr_lon)
+                capture_image(curr_lat, curr_lon)  
+        else:
+            for j in range(int(area_width / step), -1, -1):
+                curr_lon = start_lon + (j * step_lon)
+                lat_coords.append(curr_lat)
+                lon_coords.append(curr_lon)
+                capture_image(curr_lat, curr_lon)  
+    return np.array(lat_coords), np.array(lon_coords)
+
+def capture_image(lat, lon):
+
+    camera = cv2.VideoCapture(0)
+    if not camera.isOpened():
+        print("Error: Camera not accessible.")
+        return
+
+    ret, frame = camera.read()
+    if ret:
+        image_path = f"mapped_image_{lat}_{lon}_{int(time.time())}.jpg"
+        cv2.imwrite(image_path, frame)
+        upload_image_to_s3(image_path)
+    camera.release() 
+
+def generate_ellipse_path(semi_major_axis, semi_minor_axis, num_points=100):
+    lat_coords = []
+    lon_coords = []
+    for i in range(num_points):
+        theta = 2 * np.pi * i / num_points
+        lat_offset = semi_major_axis * np.sin(theta)
+        lon_offset = semi_minor_axis * np.cos(theta)
+        lat_coords.append(start_lat + lat_offset * (1 / 111000))
+        lon_coords.append(start_lon + lon_offset * (1 / (111000 * np.cos(np.radians(start_lat)))))
+    return np.array(lat_coords), np.array(lon_coords)
+
+def button_callback(channel):
+    global current_pattern
+    if current_pattern == "elliptical":
+        current_pattern = "zigzag"
+        h=500
+        print("Switched to Zigzag Pattern")
+    else:
+        current_pattern = "elliptical"
+        print("Switched to Elliptical Pattern")
+
+if __name__ == "__main__":
+    try:
+        base_location = (start_lat, start_lon)
+        area_width = 63.61
+        area_length = 63.61
+        semi_major_axis = 0.01  
+        semi_minor_axis = 0.005  
+        last_ellipse_time = time.time() 
+        ellipse_interval = 6 * 3600  
+
+        zigzag_lat, zigzag_lon = generate_zigzag_with_capture(area_width, area_length, overlap)
+        ellipse_lat, ellipse_lon = generate_ellipse_path(semi_major_axis, semi_minor_axis)
+
+        capture_thread = threading.Thread(target=capture_and_upload)
+        capture_thread.start() 
+
+        while True:
+            current_location = vehicle.location.global_frame
+            if is_drone_away_from_base(current_location, base_location):
+                pass
+
+            current_time = time.time()
+            if current_time - last_ellipse_time >= ellipse_interval:
+             
+                for lat, lon in zip(ellipse_lat, ellipse_lon):
+                    avoidance()
+                    vehicle.simple_goto(lat, lon, altitude)
+                    time.sleep(1)
+                last_ellipse_time = current_time  
+
+            task = "mapping" 
+            if task == "mapping":
+                for lat, lon in zip(zigzag_lat, zigzag_lon):
+                    avoidance()
+                    vehicle.simple_goto(lat, lon, altitude)
+                    time.sleep(1)
+
+            time.sleep(0.01)
+
+    except Exception as e:
+        print(f"Program stopped due to error: {e}")
+    finally:
+        close_camera()  
+        GPIO.cleanup()
