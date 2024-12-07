@@ -1,0 +1,105 @@
+import tensorflow as tf
+from tensorflow import layers, models
+import matplotlib.pyplot as plt
+import boto3
+import pandas as pd
+from io import StringIO
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier, BaggingClassifier
+from sklearn.linear_model import LogisticRegression, Perceptron
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.naive_bayes import GaussianNB
+from sklearn.svm import SVC
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import accuracy_score
+
+
+models = {
+    'Logistic Regression': LogisticRegression(),
+    'K-Nearest Neighbors': KNeighborsClassifier(),
+    'Naive Bayes': GaussianNB(),
+    'Support Vector Machine': SVC(),
+    'Decision Tree': DecisionTreeClassifier(),
+    'Random Forest': RandomForestClassifier(),
+    'Gradient Boosting': GradientBoostingClassifier(),
+    'Perceptron': Perceptron(),
+    'Linear Discriminant Analysis': LinearDiscriminantAnalysis(),
+    'AdaBoost': AdaBoostClassifier(),
+    'Bagging': BaggingClassifier(),
+    'Multi-layer Perceptron': MLPClassifier()
+}
+class data_preprocessing:
+    def __init__(self, bucket_name, file_name ): 
+       self.s3 = boto3.client('s3')
+       self.response = self.s3.get_object(Bucket='bucket_name', Key='file_key')
+       csv_data = self.response['Body'].read().decode('utf-8')
+       self.df = pd.read_csv(StringIO(csv_data))
+       self.X = self.df.drop('target', axis=1) 
+       self.y = self.df['target']  
+       self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+       self.response2=self.s3.list_of_objects(bucket_name,file_name)
+       self.image_paths=[]
+       self.image_data=[]
+       if 'Contents' in self.response2:
+             for obj in self.response2('Contents'):
+                   if obj['key'].endswith((',png','.jpeg','.jpg')):
+                        self.image_paths.append(obj['key'])
+                        print(self.image_paths)
+       self.image_data(self.image_paths)
+
+
+class image_datamain(data_preprocessing):
+        def __init__(self, bucket_name, file_name ): 
+            super.__init__(bucket_name, file_name)
+            
+        def classification_image(image_data):
+                    cnn = tf.keras.models.Sequential()
+                    cnn.add(tf.keras.layers.Conv2D(filters=32, kernel_size=7, activation='relu', input_shape=(720, 1280, 7)))
+                    cnn.add(tf.keras.layers.MaxPooling2D(pool_size=(2, 2)))
+                    cnn.add(tf.keras.layers.Conv2D(filters=64, kernel_size=7, activation='relu'))
+                    cnn.add(tf.keras.layers.MaxPooling2D(pool_size=(2, 2)))
+                    cnn.add(tf.keras.layers.Conv2D(filters=128, kernel_size=7, activation='relu'))
+                    cnn.add(tf.keras.layers.MaxPooling2D(pool_size=(2, 2)))
+                    cnn.add(tf.keras.layers.Conv2D(filters=256, kernel_size=7, activation='relu'))
+                    cnn.add(tf.keras.layers.MaxPooling2D(pool_size=(2, 2)))
+                    cnn.add(tf.keras.layers.Flatten())
+                    cnn.add(tf.keras.layers.Dense(units=128, activation='relu'))
+                    cnn.add(tf.keras.layers.Dense(units=1, activation='sigmoid'))
+                    cnn.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+                    
+                    predictions = cnn.predict(image_data)
+                    print(predictions)
+
+
+        def train_models(self,models):
+                best_accuracy=0
+                best_model_name=None
+                predictions_final=None
+                
+                
+                for model_name, model in models.items():
+                    model.fit(self.X_train, self.y_train)
+                    y_pred = model.predict(self.X_test)
+                    accuracy = accuracy_score(self.y_test, y_pred)
+
+                    print(f'{model_name} Accuracy: {accuracy:.2f}')
+                    if accuracy > best_accuracy:
+                        best_accuracy = accuracy
+                        best_model_name = model_name
+                        predictions_final = y_pred
+                    print(f'Best Model: {best_model_name} with Accuracy: {best_accuracy:.2f}')
+                    print(predictions_final)
+
+
+class comparision(image_datamain):
+      def __init__(self, bucket_name, file_name):
+            super().__init__(bucket_name, file_name)
+
+      def final_process():
+            
+                  
+      
+
+
