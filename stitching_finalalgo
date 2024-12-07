@@ -1,0 +1,54 @@
+import cv2
+import boto3
+import numpy as np
+import hashlib
+
+camera="whatever maybe the config adress in the microprosessor "
+
+s3 = boto3.client('s3', 
+                          aws_access_key_id='YOUR_AWS_ACCESS_KEY',
+                          aws_secret_access_key='YOUR_AWS_SECRET_KEY',
+                          region_name='YOUR_AWS_REGION')
+
+bucket_name = 'your-bucket-name'
+image_name="path to the image "
+
+image= s3.generate_presigned_url('get_object',
+                                     Params={'Bucket': "bucket name ",'key':"image name "},
+                                     ExpiresIn=9000)
+bucket=bucket_name
+
+def lambda_handler(event,context):
+    bucket=bucket_name
+    unique_hashes=set()
+    response=s3.list_of_objects(Bucket=bucket,prefix='images')
+    for obj in response.get('Contents',[]):
+                   key=obj[key]
+                   image_data=s3.get_object(Bucket=bucket,key=key)['body'].read()
+                   image_hash=hashlib.md5(image_data).hexdigest
+
+                   if image_hash in unique_hashes:
+                           s3.delete_obj(bucket=bucket,key=key)
+                   else:
+                           unique_hashes.add(image_hash)
+
+    stitch_images(bucket)
+    
+def stitch_images(bucket_name):
+        response=s3.list_of_objects(Bucket=bucket,prefix='images')
+        images=[]
+        for obj in response.get('Contents',[]):
+                   key=obj[key]
+                   image_data=s3.get_object(Bucket=bucket,key=key)['body'].read()
+                   nparr=np.frombuffer(image_data,np.uint8)
+                   img=cv2.imdecode[nparr,cv2.IMREAD_COLOR]
+                   images.append(img)
+        stitcher=cv2.Stitcher()
+        (status, stitched)=stitcher.stitch(images)
+
+        if status == cv2.STITCHER_OK:
+                _,buffer=cv2.imencode('.png',stitched)
+                stitched_key= 'stitched_output.png'
+                s3.put_objects (bucket=bucket_name,key=stitched_key, body=buffer.tobytes(),ContentType='image/png')
+        else:
+            print("Image stitching failed with status: {}".format(status))
