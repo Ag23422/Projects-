@@ -1,0 +1,48 @@
+import math
+
+def calculate_saturated_vapor_pressure(temperature):
+    """Calculate saturated vapor pressure (kPa) using temperature (°C)."""
+    return 0.6108 * math.exp((17.27 * temperature) / (temperature + 237.3))
+
+def calculate_actual_vapor_pressure(relative_humidity, saturated_vapor_pressure):
+    """Calculate actual vapor pressure (kPa)."""
+    return (relative_humidity / 100) * saturated_vapor_pressure
+
+def calculate_et(temperature, humidity, radiation, kc, soil_heat_flux_density, wind_speed, surface_resistance, actual_vapor_pressure, psychrometric_constant):
+    """Calculate evapotranspiration (ET) using the Penman-Monteith equation."""
+    
+    # Calculate saturated vapor pressure
+    svp = calculate_saturated_vapor_pressure(temperature)
+    
+    # Calculate net radiation (assuming radiation is in MJ/m²/day)
+    net_radiation = radiation * 0.0864  # Convert MJ/m²/day to W/m²
+    
+    # Calculate ET (mm/day)
+    et = (0.408 * (net_radiation - soil_heat_flux_density) + 
+           (psychrometric_constant * (900 / (temperature + 273)) * wind_speed * 
+           (svp - actual_vapor_pressure))) / (psychrometric_constant + 
+           (1 + surface_resistance / 1000))
+    
+    return et
+
+# Constants for calculation
+solar_radiation = 5  # Example value in MJ/m²/day
+soil_heat_flux_density = 0.1  # Example value in MJ/m²/day
+kc = 0.5  # Crop coefficient for wheat in tillering stage
+surface_resistance = 70  # Example value in s/m
+psychrometric_constant = 0.066  # Example value in kPa/°C
+
+# User input for temperature, humidity, and wind speed
+temperature = float(input("Enter the temperature (°C): "))
+humidity = float(input("Enter the humidity (%): "))
+wind_speed = float(input("Enter the wind speed (m/s): "))
+
+# Calculate actual vapor pressure
+svp = calculate_saturated_vapor_pressure(temperature)
+actual_vapor_pressure = calculate_actual_vapor_pressure(humidity, svp)
+
+# Calculate ET
+et = calculate_et(temperature, humidity, solar_radiation, kc, soil_heat_flux_density, wind_speed, surface_resistance, actual_vapor_pressure, psychrometric_constant)
+ET=kc*et
+print(f"Evapotranspiration (ET) for wheat in tillering stage: {et:.2f} mm/day")
+print("real et :",ET)
