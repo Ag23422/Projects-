@@ -1,0 +1,64 @@
+import tensorflow as tf
+from tensorflow.keras import layers, models
+from sklearn.model_selection import train_test_split
+import numpy as np
+import os
+from PIL import Image
+
+# Function to load images and labels for disease detection
+def load_data(data_dir, img_size=(128, 128)):
+    images = []
+    labels = []
+    
+    # Assuming two subdirectories: 'Healthy' and 'Diseased'
+    for label in ['Healthy', 'Diseased']:
+        label_dir = os.path.join(data_dir, label)
+        if os.path.isdir(label_dir):
+            for img_file in os.listdir(label_dir):
+                img_path = os.path.join(label_dir, img_file)
+                img = Image.open(img_path).resize(img_size)
+                images.append(np.array(img))
+                labels.append(0 if label == 'Healthy' else 1)  # 0 for Healthy, 1 for Diseased
+    
+    return np.array(images), np.array(labels)
+
+# Function to preprocess data
+def preprocess_data(images, labels):
+    images = images.astype('float32') / 255.0  # Normalize images
+    labels = tf.keras.utils.to_categorical(labels)  # One-hot encode labels
+    return images, labels
+
+# Function to create a CNN model
+def create_model(num_classes):
+    model = models.Sequential([
+        layers.Conv2D(32, (3, 3), activation='relu', input_shape=(128, 128, 3)),
+        layers.MaxPooling2D(pool_size=(2, 2)),
+        layers.Conv2D(64, (3, 3), activation='relu'),
+        layers.MaxPooling2D(pool_size=(2, 2)),
+        layers.Conv2D(128, (3, 3), activation='relu'),
+        layers.MaxPooling2D(pool_size=(2, 2)),
+        layers.Flatten(),
+        layers.Dense(128, activation='relu'),
+        layers.Dense(num_classes, activation='softmax')
+    ])
+    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    return model
+
+# Function to train the model
+def train_model(model, images, labels, epochs=10, batch_size=32):
+    X_train, X_val, y_train, y_val = train_test_split(images, labels, test_size=0.2, random_state=42)
+    model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=epochs, batch_size=batch_size)
+
+# Main function to run the disease detection task
+def main(data_dir):
+    images, labels = load_data(data_dir)
+    images, labels = preprocess_data(images, labels)
+    
+    num_classes = 2  # Healthy vs. Diseased
+    model = create_model(num_classes)
+    train_model(model, images, labels)
+
+# Example usage
+if __name__ == "__main__":
+    data_dir = 'path/to/your/disease/dataset'  # Update this path
+    main(data_dir)
