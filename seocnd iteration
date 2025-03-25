@@ -1,0 +1,228 @@
+#include <fstream>
+#include <sstream>
+#include <iostream>
+#include <opencv2/dnn.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/highgui.hpp>
+#include <opencv2/opencv.hpp>
+
+using namespace std;
+using namespace cv;
+using namespace dnn;
+
+// Confidence threshold
+float conf_threshold = 0.5;
+// NMS threshold
+float nms = 0.4;
+int width = 416;
+int height = 416;
+
+// Known parameters for calibration
+float KNOWN_WIDTH = 11.0; // Width of the reference object in inches
+float KNOWN_DISTANCE = 24.0; // Distance from camera to reference object in inches
+float focalLength = 0.0; // Focal length to be calculated
+
+vector<string> classes;
+
+// Function to calculate distance to the object
+float distanceToCamera(float knownWidth, float focalLength, float perceivedWidth) {
+    return (knownWidth * focalLength) / perceivedWidth;
+}
+
+// Function to calculate volume based on pixel dimensions
+float calculateVolume(int width, int height, int depth) {
+    return width * height * depth; // Volume in cubic pixels
+}
+
+// Function to convert cubic pixels to liters
+float cubicPixelsToLiters(float cubicPixels, float pixelSizeMM) {
+    // Convert pixel size from mm to meters
+    float pixelSizeM = pixelSizeMM / 1000.0f;
+
+    // Calculate volume in cubic meters
+    float volumeCubicMeters = cubicPixels * (pixelSizeM * pixelSizeM * pixelSizeM);
+
+    // Convert cubic meters to liters
+    return volumeCubicMeters * 1000.0f; // 1 m³ = 1000 liters
+}
+
+// Remove unnecessary bounding boxes
+void remove_box(Mat& frame, const vector<Mat>& out);
+
+// Draw bounding boxes
+void draw_box(int classId, float conf, int left, int top, int right, int bottom, Mat& frame);
+
+// Get output layers
+vector<String> getOutputsNames(const Net& net);
+
+// Driver function
+int main(int argc, char** argv) {
+    // Get labels of all classes
+    string classesFile = "coco.names";
+    ifstream ifs(classesFile.c_str());
+    string line;
+    while (getline(ifs, line)) classes.push_back(line);
+    
+    // Load model weights and architecture
+    String configuration = "/home/ansh/wirelesslab/build/yolov3.cfg";
+    String model = "/home/ansh/wirelesslab/build/yolov3.weights";
+
+    // Load the network
+    Net net = readNetFromDarknet(configuration, model);
+    
+    // Start webcam
+    VideoCapture cap(0); // Open the default camera
+    if (!cap.isOpened()) {
+        cerr << "Error: Could not open camera." << endl;
+        return -1;
+    }
+
+    Mat frame, blob;
+
+    // Capture a reference image to calculate focal length
+    cap >> frame; // Capture frame for calibration
+    blobFromImage(frame, blob, 1 / 255.0, Size(width, height), Scalar(0, 0, 0), true, false);
+    net.setInput(blob);
+    vector<Mat> outs;
+    net.forward(outs, getOutputsNames(net));
+
+    // Calculate focal length using a known reference object
+    for (size_t i = 0; i < outs.size(); ++i) {
+        float* data = (float*)outs[i].data;
+        for (int j = 0; j < outs[i].rows; ++j, data += outs[i].cols) {
+            Mat scores = outs[i].row(j).colRange(5, outs[i].cols);
+            Point classIdPoint;
+            double confidence;
+            minMaxLoc(scores, 0, &confidence, 0, &classIdPoint);
+            if (confidence > conf_threshold) {
+                int centerX = (int)(data[0] * frame.cols);
+                int centerY = (int)(data[1] * frame.rows);
+                int boxWidth = (int)(data[2] * frame.cols);
+                int boxHeight = (int)(data[3] * frame.rows);
+                int left = centerX - boxWidth / 2;
+                int top = centerY - boxHeight / 2;
+
+                // Calculate focal length
+                focalLength = (boxWidth * KNOWN_DISTANCE) / KNOWN_WIDTH;
+                break; // Exit after calculating focal length
+            }
+        }
+    }
+
+    while (true) {
+        cap >> frame; // Capture frame
+        if (frame.empty()) break; // Break the loop if no frame is captured
+
+        // Convert image to blob
+        blobFromImage(frame, blob, 1 / 255.0, Size(width, height), Scalar(0, 0, 0), true, false);
+        net.setInput(blob);
+
+        vector<Mat> outs;
+        net.forward(outs, getOutputsNames(net));
+
+        remove_box(frame, outs);
+
+        // Convert the frame to grayscale
+        Mat grayFrame;
+        cvtColor(frame, grayFrame, COLOR_BGR2GRAY);
+
+        // Count black pixels in the grayscale frame
+        int blackPixelCount = countNonZero(grayFrame == 0); // Count black pixels
+
+        // Calculate volume based on black pixels
+        int depth = 5; // Example depth in pixels
+        float volumeInCubicPixels = calculateVolume(frame.cols, frame.rows, depth);
+        float pixelSizeMM = 1.0f; // Size of each pixel in mm
+        float volumeInLiters = cubicPixelsToLiters(volumeInCubicPixels, pixelSizeMM);
+
+        cout << "Detected volume based on black pixels: " << volumeInLiters << " liters" << endl;
+
+        // Show the frame
+        imshow("Object Detection", frame);
+        if (waitKey(1) == 'q') break; // Exit on 'q'
+    }
+
+    cap.release();
+    destroyAllWindows();
+    return 0;
+}
+
+void remove_box(Mat& frame, const vector<Mat>& outs) {
+    vector<int> classIds;
+    vector<float> confidences;
+    vector<Rect> boxes;
+    
+    for (size_t i = 0; i < outs.size(); ++i) {
+        float* data = (float*)outs[i].data;
+        for (int j = 0; j < outs[i].rows; ++j, data += outs[i].cols) {
+            Mat scores = outs[i].row(j).colRange(5, outs[i].cols);
+            Point classIdPoint;
+            double confidence;
+            minMaxLoc(scores, 0, &confidence, 0, &classIdPoint);
+            if (confidence > conf_threshold) {
+                int centerX = (int)(data[0] * frame.cols);
+                int centerY = (int)(data[1] * frame.rows);
+                int boxWidth = (int)(data[2] * frame.cols);
+                int boxHeight = (int)(data[3] * frame.rows);
+                int left = centerX - boxWidth / 2;
+                int top = centerY - boxHeight / 2;
+                
+                classIds.push_back(classIdPoint.x);
+                confidences.push_back((float)confidence);
+                boxes.push_back(Rect(left, top, boxWidth, boxHeight));
+
+                // Disregard person detection (class ID 0)
+                if (classIdPoint.x == 0) {
+                    continue; // Skip processing for persons
+                }
+
+                // Calculate volume based on pixel dimensions
+                int depth = 5; // Example depth in pixels
+                float volumeInCubicPixels = calculateVolume(boxWidth, boxHeight, depth);
+                
+                // Convert cubic pixels to liters (assuming each pixel is 1 mm x 1 mm)
+                float pixelSizeMM = 1.0f; // Size of each pixel in mm
+                float volumeInLiters = cubicPixelsToLiters(volumeInCubicPixels, pixelSizeMM);
+                
+                cout << "Detected object volume: " << volumeInLiters << " liters" << endl;
+            }
+        }
+    }
+    
+    vector<int> indices;
+    NMSBoxes(boxes, confidences, conf_threshold, nms, indices);
+    for (size_t i = 0; i < indices.size(); ++i) {
+        int idx = indices[i];
+        Rect box = boxes[idx];
+        draw_box(classIds[idx], confidences[idx], box.x, box.y,
+                 box.x + box.width, box.y + box.height, frame);
+    }
+}
+
+void draw_box(int classId, float conf, int left, int top, int right, int bottom, Mat& frame) {
+    rectangle(frame, Point(left, top), Point(right, bottom), Scalar(255, 178, 50), 3);
+    
+    string label = format("%.2f", conf);
+    if (!classes.empty()) {
+        CV_Assert(classId < (int)classes.size());
+        label = classes[classId] + ":" + label;
+    }
+    
+    int baseLine;
+    Size labelSize = getTextSize(label, FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseLine);
+    top = max(top, labelSize.height);
+    rectangle(frame, Point(left, top - round(1.5 * labelSize.height)), Point(left + round(1.5 * labelSize.width), top + baseLine), Scalar(255, 255, 255), FILLED);
+    putText(frame, label, Point(left, top), FONT_HERSHEY_SIMPLEX, 0.75, Scalar(0, 0, 0), 1);
+}
+
+vector<String> getOutputsNames(const Net& net) {
+    static vector<String> names;
+    if (names.empty()) {
+        vector<int> outLayers = net.getUnconnectedOutLayers();
+        vector<String> layersNames = net.getLayerNames();
+        names.resize(outLayers.size());
+        for (size_t i = 0; i < outLayers.size(); ++i)
+            names[i] = layersNames[outLayers[i] - 1];
+    }
+    return names;
+}
