@@ -33,7 +33,7 @@ This repository contains backend systems and APIs developed during internship wo
 
 ## 📁 Folder Structure
 
-```
+
 
 internship\_projects/
 │
