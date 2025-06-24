@@ -1,0 +1,296 @@
+import os
+from pathlib import Path
+import sys
+import argparse
+import random
+from tqdm import tqdm
+from itertools import combinations
+
+import torch
+import torch.nn as nn
+from torch.autograd import Variable
+from torch.utils.data import Dataset, DataLoader
+import torch.multiprocessing
+from torchvision import transforms
+from PIL import Image
+
+if '/content/SuperGlue-pytorch' not in sys.path:
+    sys.path.append('/content/SuperGlue-pytorch')
+
+from models.utils import *
+from models.superpoint import SuperPoint
+from models.superglue import SuperGlue
+from models.matchingForTraining import MatchingForTraining
+import os
+from itertools import combinations
+
+train_dir = '/content/drive/MyDrive/segregated_by_denomination_cropped/train'
+pairs_file = os.path.join(train_dir, 'pairs.txt')
+
+with open(pairs_file, 'w', encoding='utf-8') as f:
+ 
+    for denom_folder in sorted(os.listdir(train_dir)):
+        folder_path = os.path.join(train_dir, denom_folder)
+        if not os.path.isdir(folder_path):
+            continue
+
+    
+        images = [img for img in sorted(os.listdir(folder_path)) if img.lower().endswith(('.jpg', '.jpeg', '.png'))]
+
+        
+        for img1, img2 in combinations(images, 2):
+            # Write relative paths from train folder with tab separator
+            f.write(f"{denom_folder}/{img1}\t{denom_folder}/{img2}\n")
+
+print(f"Pairs file generated at: {pairs_file}")
+
+
+dataset_path = '/content/drive/MyDrive/segregated_by_denomination_cropped/train'
+
+
+matches_save_path = '/content/drive/MyDrive/segregated_by_denomination_cropped/train/matches'
+
+os.makedirs(matches_save_path, exist_ok=True)
+
+transform = transforms.Compose([
+    transforms.Resize((480, 640)),
+    transforms.Grayscale(num_output_channels=1),
+    transforms.ToTensor(),
+])
+
+
+sp_config = {
+    'nms_radius': 4,
+    'keypoint_threshold': 0.005,
+    'max_keypoints': 1024,
+}
+superpoint = SuperPoint(sp_config).to(device)
+superpoint.eval()
+
+pairs = []
+with open(pairs_file, 'r') as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split('\t')  # split by tab
+        if len(parts) != 2:
+            raise ValueError(f"Expected 2 parts per line in pairs.txt but got {len(parts)}: {line}")
+        pairs.append(parts)
+
+homographies = {}  
+
+def warp_keypoints(kpts, H):
+    """Warp keypoints with homography H (3x3)"""
+    n = kpts.shape[0]
+    homog_pts = torch.cat([kpts, torch.ones(n, 1).to(kpts.device)], dim=1).t()  # 3 x n
+    warped = H @ homog_pts  # 3 x n
+    warped = warped[:2] / warped[2:3]
+    return warped.t()
+
+pixel_threshold = 5.0  # max pixel distance to count as a match
+
+for im0_path, im1_path in pairs:
+    im0_name = os.path.basename(im0_path)
+    im1_name = os.path.basename(im1_path)
+
+    im0_full = Image.open(os.path.join(dataset_path, im0_path)).convert('RGB')
+    im1_full = Image.open(os.path.join(dataset_path, im1_path)).convert('RGB')
+
+    im0_tensor = transform(im0_full).unsqueeze(0).to(device)
+    im1_tensor = transform(im1_full).unsqueeze(0).to(device)
+
+    with torch.no_grad():
+        sp0 = superpoint({'image': im0_tensor})
+        sp1 = superpoint({'image': im1_tensor})
+
+    kpts0 = sp0['keypoints'][0]  # [N0, 2], normalized coordinates [0..W or H]
+    kpts1 = sp1['keypoints'][0]
+
+    # Convert keypoints from normalized coordinates to pixel coords
+    # SuperPoint keypoints are normalized coords [0..W] or [0..H] based on your code
+    # If your keypoints are in normalized [0..1] scale, multiply by image size here accordingly
+    # Assuming they are pixel coords here:
+    # Otherwise, convert accordingly
+
+    # Get homography for this pair or use identity if none
+    H = homographies.get((im0_path, im1_path), torch.eye(3).to(device))
+
+    # Warp kpts0 to image1 coords using H
+    warped_kpts0 = warp_keypoints(kpts0, H)  # [N0, 2]
+
+    # For each warped keypoint in image0, find closest keypoint in image1
+    all_matches = -torch.ones(kpts0.shape[0], dtype=torch.long)
+
+    for i, kp in enumerate(warped_kpts0):
+        if kpts1.shape[0] == 0:
+            continue
+        dists = torch.norm(kpts1 - kp.unsqueeze(0), dim=1)  # [N1]
+        min_dist, min_idx = torch.min(dists, dim=0)
+        if min_dist < pixel_threshold:
+            all_matches[i] = min_idx.item()
+
+    # Save matches tensor to disk
+    save_name = f"{im0_name}_to_{im1_name}_matches.pt"
+    torch.save(all_matches, os.path.join(matches_save_path, save_name))
+
+    print(f"Saved matches for {im0_name} -> {im1_name}, matches shape: {all_matches.shape}")
+
+torch.set_grad_enabled(True)
+torch.multiprocessing.set_sharing_strategy('file_system')
+
+parser = argparse.ArgumentParser(description='Train SuperGlue on image pairs')
+parser.add_argument('--superglue', choices={'indoor', 'outdoor'}, default='indoor')
+parser.add_argument('--max_keypoints', type=int, default=1024)
+parser.add_argument('--keypoint_threshold', type=float, default=0.005)
+parser.add_argument('--nms_radius', type=int, default=4)
+parser.add_argument('--sinkhorn_iterations', type=int, default=20)
+parser.add_argument('--match_threshold', type=float, default=0.2)
+parser.add_argument('--resize', type=int, nargs='+', default=[640, 480])
+parser.add_argument('--train_path', type=str, default='/content/drive/MyDrive/segregated_by_denomination_cropped/train')
+parser.add_argument('--learning_rate', type=float, default=0.0001)
+parser.add_argument('--batch_size', type=int, default=1)
+parser.add_argument('--epoch', type=int, default=20)
+parser.add_argument('--viz', action='store_true')
+parser.add_argument('--save_model_dir', type=str, default='checkpoints/')
+parser.add_argument('--eval_output_dir', type=str, default='dump_match_pairs/')
+
+if 'ipykernel' in sys.modules:
+    sys.argv = [
+        'main.py',
+        '--train_path', '/content/drive/MyDrive/segregated_by_denomination_cropped/train',
+        '--epoch', '20',
+        '--viz',
+        '--save_model_dir', 'checkpoints/',
+        '--eval_output_dir', 'dump_match_pairs/'
+    ]
+
+opt = parser.parse_args()
+
+# --- Dataset class ---
+class PairedImageDataset(Dataset):
+  def __getitem__(self, idx):
+      path0, path1 = self.pairs[idx]
+      image0 = Image.open(path0).convert('RGB')
+      image1 = Image.open(path1).convert('RGB')
+
+      if self.transform:
+          image0 = self.transform(image0)
+          image1 = self.transform(image1)
+
+      im0_name = os.path.basename(path0)
+      im1_name = os.path.basename(path1)
+      match_file = os.path.join(self.root_dir, 'matches', f"{im0_name}_to_{im1_name}_matches.pt")
+
+      if os.path.exists(match_file):
+          all_matches = torch.load(match_file)
+      else:
+          all_matches = torch.empty(0)  # or all -1s depending on your needs
+
+      return {
+          'image0': image0,
+          'image1': image1,
+          'file_name0': im0_name,
+          'file_name1': im1_name,
+          'all_matches': all_matches
+      }
+# --- Transform ---
+transform = transforms.Compose([
+    transforms.Resize((opt.resize[1], opt.resize[0])),  # height x width
+    transforms.Grayscale(num_output_channels=1),        # Convert to grayscale
+    transforms.ToTensor(),                              # Convert to tensor (1,C,H,W)
+])
+
+if __name__ == '__main__':
+    print(opt)
+
+    Path(opt.save_model_dir).mkdir(parents=True, exist_ok=True)
+    Path(opt.eval_output_dir).mkdir(parents=True, exist_ok=True)
+
+    config = {
+        'superpoint': {
+            'nms_radius': opt.nms_radius,
+            'keypoint_threshold': opt.keypoint_threshold,
+            'max_keypoints': opt.max_keypoints
+        },
+        'superglue': {
+            'weights': opt.superglue,
+            'sinkhorn_iterations': opt.sinkhorn_iterations,
+            'match_threshold': opt.match_threshold,
+        }
+    }
+
+    # Dataset and loader
+    train_set = PairedImageDataset(opt.train_path, transform=transform)
+    train_loader = DataLoader(train_set, batch_size=opt.batch_size, shuffle=True, drop_last=True)
+
+    # Models
+    superpoint = SuperPoint(config['superpoint']).cuda()
+    superglue = SuperGlue(config['superglue']).cuda()
+    optimizer = torch.optim.Adam(list(superpoint.parameters()) + list(superglue.parameters()), lr=opt.learning_rate)
+
+    mean_loss = []
+
+    for epoch in range(1, opt.epoch + 1):
+        epoch_loss = 0
+        superpoint.train()
+        superglue.train()
+
+        for i, batch in enumerate(tqdm(train_loader)):
+            image0 = batch['image0'].cuda()
+            image1 = batch['image1'].cuda()
+
+            sp_out0 = superpoint({'image': image0})
+            sp_out1 = superpoint({'image': image1})
+
+            # Ensure outputs are tensors
+            for key in ['keypoints', 'descriptors', 'scores']:
+                if isinstance(sp_out0[key], list):
+                    sp_out0[key] = sp_out0[key][0]
+                if isinstance(sp_out1[key], list):
+                    sp_out1[key] = sp_out1[key][0]
+
+            print(f"SuperPoint output keys: {sp_out0.keys()}")
+            print(f"Type of scores: {type(sp_out0['scores'])}")
+
+            data = {
+            'keypoints0': sp_out0['keypoints'].detach(),
+            'descriptors0': sp_out0['descriptors'].detach(),
+            'scores0': sp_out0['scores'][0].detach() if isinstance(sp_out0['scores'], tuple) else sp_out0['scores'].detach(),
+            'keypoints1': sp_out1['keypoints'].detach(),
+            'descriptors1': sp_out1['descriptors'].detach(),
+            'scores1': sp_out1['scores'][0].detach() if isinstance(sp_out1['scores'], tuple) else sp_out1['scores'].detach(),
+            'image0': image0,
+            'image1': image1,
+             'file_name': (batch['file_name0'][0], batch['file_name1'][0])
+            }
+            output = superglue(data)
+            if output.get('skip_train', False):
+                continue
+
+            loss = output['loss']
+            epoch_loss += loss.item()
+            mean_loss.append(loss)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            if (i + 1) % 50 == 0:
+                print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}'.format(
+                    epoch, opt.epoch, i + 1, len(train_loader), torch.mean(torch.stack(mean_loss)).item()))
+                mean_loss = []
+
+        epoch_loss /= len(train_loader)
+        model_out_path = Path(opt.save_model_dir) / f"model_epoch_{epoch}.pth"
+        torch.save({
+            'superpoint': superpoint.state_dict(),
+            'superglue': superglue.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'epoch': epoch,
+        }, str(model_out_path))
+
+        print(f"Epoch [{epoch}/{opt.epoch}] done. Loss: {epoch_loss:.4f}, saved to {model_out_path}")
+
+
+
