@@ -1,0 +1,38 @@
+import boto3
+import numpy as np
+import joblib
+from sklearn.ensemble import RandomForestClassifier
+
+
+BUCKET_NAME = "your-bucket-name"
+EMBEDDINGS_KEY = "models/reference_embeddings.npy"
+LABELS_KEY = "models/reference_labels.npy"
+OUTPUT_MODEL_PATH = "embedding_classifier.pkl"
+UPLOAD_TO_S3 = True
+MODEL_UPLOAD_KEY = "models/embedding_classifier.pkl"
+
+s3 = boto3.client('s3')
+
+def download_numpy_array(key):
+    response = s3.get_object(Bucket=BUCKET_NAME, Key=key)
+    return np.load(response['Body'])
+
+print("[INFO] Downloading embeddings and labels...")
+embeddings = download_numpy_array(EMBEDDINGS_KEY)
+labels = download_numpy_array(LABELS_KEY)
+
+
+print("[INFO] Training Random Forest Classifier...")
+model = RandomForestClassifier(n_estimators=100, random_state=42)
+model.fit(embeddings, labels)
+
+
+print(f"[INFO] Saving model to {OUTPUT_MODEL_PATH}...")
+joblib.dump(model, OUTPUT_MODEL_PATH)
+
+
+if UPLOAD_TO_S3:
+    print(f"[INFO] Uploading model to s3://{BUCKET_NAME}/{MODEL_UPLOAD_KEY}...")
+    s3.upload_file(OUTPUT_MODEL_PATH, BUCKET_NAME, MODEL_UPLOAD_KEY)
+
+print("[DONE] Model training and export complete.")
