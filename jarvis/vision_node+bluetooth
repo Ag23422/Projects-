@@ -1,0 +1,62 @@
+import cv2
+import bluetooth
+
+class JarvisVisionLayer:
+    def __init__(self):
+        self.local_cameras = self.list_local_cameras()
+
+    def list_local_cameras(self, max_devices=5):
+        available_cameras = []
+        for i in range(max_devices):
+            cap = cv2.VideoCapture(i)
+            if cap.read()[0]:
+                available_cameras.append(i)
+            cap.release()
+        print(f"[Vision] Local cameras detected: {available_cameras}")
+        return available_cameras
+
+    def open_local_camera(self, device_index=0):
+        if device_index not in self.local_cameras:
+            print(f"[Vision] Camera {device_index} not found.")
+            return
+        cap = cv2.VideoCapture(device_index)
+        print(f"[Vision] Accessing Local Camera {device_index}")
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                print("[Vision] Can't receive frame (stream end?). Exiting...")
+                break
+            cv2.imshow(f'Jarvis Vision - Camera {device_index}', frame)
+            if cv2.waitKey(1) == ord('q'):
+                break
+        cap.release()
+        cv2.destroyAllWindows()
+
+    def scan_bluetooth_devices(self):
+        print("[Vision] Scanning for bluetooth devices...")
+        try:
+            devices = bluetooth.discover_devices(duration=8, lookup_names=True)
+            for addr, name in devices:
+                print(f" - Found: {name} [{addr}]")
+            return devices
+        except Exception as e:
+            print(f"[Vision] Bluetooth scan failed: {e}")
+            return []
+
+    def connect_mobile_camera(self, target_name=None):
+        devices = self.scan_bluetooth_devices()
+        target_addr = None
+
+        for addr, name in devices:
+            if name == target_name:
+                target_addr = addr
+                break
+
+        if not target_addr:
+            print("[Vision] Target mobile device not found.")
+            return
+
+        print(f"[Vision] Found mobile device {target_name} [{target_addr}]")
+        print("[Vision] Initiating connection (future extension).")
+        
+
