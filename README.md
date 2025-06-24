@@ -1,71 +1,62 @@
-# solo-project-ai-ml
+Here is the updated `README.md` for your main **Projects** repository, with the **`intermediate`** folder section removed:
 
-import numpy as np
-import matplotlib.pyplot as plt
-import pandas as pd
-import geo.py as gps
-API_KEY = "AkvYaDkG40h_rbg-DIGhsap7cxZic5v4GUlAWqeAMkZ1prAuXXx_TLRUGCrb-Uiv"  # Replace with your Bing Maps API key
+---
 
-geolocator = geopy.geocoders.Bing(AkvYaDkG40h_rbg-DIGhsap7cxZic5v4GUlAWqeAMkZ1prAuXXx_TLRUGCrb-Uiv)
+````markdown
+# Ansh Sharma — Project Portfolio
 
+This repository showcases a curated collection of my technical projects across domains such as embedded systems, drone automation, computer vision, and core programming. Each folder contains working code, documentation, and relevant assets that reflect my hands-on experience in system-level programming, AI integration, and real-world IoT deployment.
 
+---
 
-dataset = pd.read_csv('realtor-data.zip.csv')
-dataset2= pd.read_csv('test.csv')
+## Repository Structure
 
+| Folder Name        | Description |
+|--------------------|-------------|
+| [`basic/`](./tree/main/basic)              | Beginner-level programs and utilities focused on foundational concepts in Python, C, and logic building. |
+| [`drone/`](./tree/main/drone)              | Autonomous drone system with real-time ET calculation, GPS-based path planning, onboard vision, MAVLink communication, and cloud integration. |
+| [`embedded_project/`](./tree/main/embedded_project)  | Microcontroller-based real-time projects implementing sensor interfacing, motor control, and communication protocols (UART, I2C, SPI). |
 
+---
 
-a = input("what is your monthley income ")
-b= input ("type of property required (enter the no of beds required)")
-c=12*int(a)
-print(c)
-X= dataset.iloc[:, 1:].values
-y = dataset.iloc[:, 3].values
-z=dataset.iloc[:,1].values
+## Key Domains Covered
 
+- **Embedded Systems:** Bare-metal programming, sensor/actuator interfacing, power-efficient logic.
+- **Drone & Robotics:** MAVLink control, GPS navigation, failsafe mechanisms, data telemetry.
+- **Computer Vision:** Image classification, OpenCV pipelines, cloud-assisted analytics.
+- **Machine Learning:** Model training, deployment, prediction systems using TensorFlow and scikit-learn.
+- **Cloud Integration:** AWS S3 pipelines for data offloading, Lambda-based compute offloading.
 
-for c in dataset.iloc[:,1].values:
-  if(c<=z.all()):
-    from sklearn.cluster import KMeans
-    wcss = []
-    for i in range(1, 11):
-      kmeans = KMeans(n_clusters = i, init = 'k-means++', random_state = 42)
-    kmeans.fit(X)
-    wcss.append(kmeans.inertia_)
-  if (int(b)==y.all()):
-       from sklearn.cluster import KMeans
-       wcss = []
-       for i in range(1, 11):
-        kmeans = KMeans(n_clusters = i, init = 'k-means++', random_state = 42)
-        kmeans.fit(X)
-        wcss.append(kmeans.inertia_)
+---
 
-d=input('enter the preffered propetry amount: ')
-e=input('enter your gender: ')
-g=input('enter your no of dependents : ')
-f=input('no of working indivisuals : ')
-h=input('total household income : ')
-k=input('the loan amount required: ')
-i={e,g,f,h,k}
+## Getting Started
 
-j=dataset2.iloc[:, 11]
-o = dataset2.iloc[:, :-1].values
-p = dataset2.iloc[:, -1].values
+Each folder contains its own `README.md` explaining:
 
-q=input('tenure of loan amount(no of years) : ')
-r=
+- Project Objective
+- Hardware/Software Requirements
+- Installation Instructions
+- Sample Output
+- Extension Ideas
 
-for d in dataset.iloc[:, 1] 
-  if (j==1):
-    from sklearn.linear_model import LogisticRegression
-    classifier = LogisticRegression(random_state = 0)
-    classifier.fit(o,p)
-    print('your per month payment is : ')
-  elif():
-    print('you are not eligeble: ')
-  
-  print(o,p)
+Feel free to clone this repository and explore any of the modules based on your interest or use case.
 
+```bash
+git clone https://github.com/Ag23422/Projects-.git
+cd Projects-
+````
 
+---
 
+## About Me
+
+**Ansh Sharma**
+Undergraduate | Software & Embedded Systems Enthusiast
+GitHub: [@Ag23422](https://github.com/Ag23422)
+
+---
+
+## Licensing
+
+All projects in this repository are open-sourced under the MIT License. Attribution is appreciated if reused.
 
