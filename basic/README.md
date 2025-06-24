@@ -119,6 +119,4 @@ basic/
 This project is licensed under the MIT License.
 Developed by \[Ansh Sharma / GitHub: Ag23422].
 
----
 
-Would you like the same README format applied to the other folders in your repository?
