@@ -1,99 +1,245 @@
-import os
+# api/api_server.py
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from typing import List
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+import uvicorn
 import numpy as np
-import matplotlib.pyplot as plt
-from tensorflow.keras import layers, models
+import tempfile
+import shutil
+import os
+import uuid
+import time
+import zipfile
+import logging
+import threading
+from pymongo import MongoClient
+from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.preprocessing.image import load_img, img_to_array
-from sklearn.metrics.pairwise import cosine_similarity
+from cnn_model.model import build_custom_cnn
+from vector_db.milvus_utils import connect_milvus, create_collection, insert_embedding, search_embedding
 
-class ImageComparison:
-    def __init__(self, master_folder):
-        self.master_folder = master_folder
-        self.model = self.build_model()  # Build the CNN model
+# Logging setup
+logging.basicConfig(filename='logs/error.log', level=logging.ERROR, format='%(asctime)s %(levelname)s:%(message)s')
 
-    def build_model(self):
-        """Build a simple CNN model for feature extraction."""
-        model = models.Sequential()
-        model.add(layers.Conv2D(32, (3, 3), activation='relu', input_shape=(150, 150, 3)))
-        model.add(layers.MaxPooling2D(pool_size=(2, 2)))
-        model.add(layers.Conv2D(64, (3, 3), activation='relu'))
-        model.add(layers.MaxPooling2D(pool_size=(2, 2)))
-        model.add(layers.Conv2D(128, (3, 3), activation='relu'))
-        model.add(layers.MaxPooling2D(pool_size=(2, 2)))
-        model.add(layers.Flatten())
-        model.add(layers.Dense(128, activation='relu'))
-        model.add(layers.Dense(64, activation='relu'))  # Output layer for feature extraction
-        return model
+# MongoDB setup
+mongo_client = MongoClient("mongodb://localhost:27017/")
+db = mongo_client["image_app"]
+log_collection = db["logs"]
 
-    def preprocess_image(self, image_path):
-        """Load and preprocess an image for the CNN model."""
-        image = load_img(image_path, target_size=(150, 150))  # Resize image to 150x150
-        image_array = img_to_array(image)
-        image_array = np.expand_dims(image_array, axis=0)  # Add batch dimension
-        return image_array / 255.0  # Normalize the image
+app = FastAPI()
 
-    def extract_features(self, image_path):
-        """Extract feature vector for an image using the CNN model."""
-        preprocessed_image = self.preprocess_image(image_path)
-        features = self.model.predict(preprocessed_image)  # Extract features
-        return features.flatten()  # Flatten to 1D feature vector
+# Load default model and setup Milvus
+DEFAULT_MODEL_PATH = "cnn_model/weights/base_model.h5"
+base_model = build_custom_cnn()
+base_model.save(DEFAULT_MODEL_PATH)
+feature_model = Model(inputs=base_model.input, outputs=base_model.get_layer("feature_vector").output)
+connect_milvus()
+create_collection()
 
-    def get_all_image_paths(self):
-        """Recursively retrieve all image paths in the master folder."""
-        image_paths = []
-        for root, _, files in os.walk(self.master_folder):
-            for file in files:
-                if file.endswith(('.png', '.jpg', '.jpeg')):
-                    image_paths.append(os.path.join(root, file))
-        return image_paths
+# Utility to extract embedding from image
+def extract_embedding_from_file(file_path, model):
+    image = load_img(file_path, target_size=(640, 640))
+    image_array = img_to_array(image) / 255.0
+    image_array = np.expand_dims(image_array, axis=0)
+    embedding_model = Model(inputs=model.input, outputs=model.get_layer("feature_vector").output)
+    embedding = embedding_model.predict(image_array)[0]
+    return embedding
 
-    def compare_image(self, input_image_path, similarity_threshold=0.85):
-        """Compare input image with all images in the master folder."""
-        input_features = self.extract_features(input_image_path)
-        image_paths = self.get_all_image_paths()
+@app.middleware("http")
+async def log_exceptions(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as e:
+        error_info = {
+            "path": str(request.url),
+            "error": str(e),
+            "method": request.method,
+            "timestamp": time.time()
+        }
+        logging.error(str(error_info))
+        log_collection.insert_one(error_info)
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
-        for image_path in image_paths:
-            dataset_features = self.extract_features(image_path)
-            # Compute cosine similarity
-            similarity = cosine_similarity([input_features], [dataset_features])[0][0]
-            print(f"Comparing with {image_path}, Similarity: {similarity:.2f}")
-            
-            if similarity >= similarity_threshold:
-                folder_name = os.path.basename(os.path.dirname(image_path))  # Extract folder name
-                print(f"Matched Image Found in Folder: {folder_name}")
-                print(f"Matched Image Path: {image_path}")
-                print(f"Similarity Score: {similarity:.2f}")
+@app.post("/insert")
+async def insert_image(file: UploadFile = File(...), model_version: str = Form("base")):
+    if file.spool_max_size > 500 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image size exceeds 500MB limit")
 
-                # Display the input image and the matched image side by side
-                self.display_images(input_image_path, image_path)
-                return  # Stop after finding the first match with sufficient similarity
+    start_time = time.time()
+    unique_id = str(uuid.uuid4())
+    image_url = f"temp/{unique_id}.jpg"
 
-        print("No matching images found with the required similarity.")
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        model_path = f"cnn_model/weights/{model_version}_model.h5"
+        model = load_model(model_path)
+        embedding = extract_embedding_from_file(tmp.name, model)
+        insert_embedding(embedding)
+        shutil.copy(tmp.name, image_url)
 
-    def display_images(self, input_image_path, matched_image_path):
-        """Display the input image and matched image side by side."""
-        input_image = load_img(input_image_path, target_size=(150, 150))
-        matched_image = load_img(matched_image_path, target_size=(150, 150))
+    elapsed_time = time.time() - start_time
 
-        plt.figure(figsize=(10, 5))
+    db.model_usage.update_one(
+        {"model_version": model_version},
+        {"$inc": {"usage_count": 1}, "$set": {"last_used": time.time()}},
+        upsert=True
+    )
 
-        # Display input image
-        plt.subplot(1, 2, 1)
-        plt.imshow(input_image)
-        plt.title("Input Image")
-        plt.axis('off')
+    log_collection.insert_one({
+        "event": "insert",
+        "embedding_id": unique_id,
+        "model_version": model_version,
+        "image_url": image_url,
+        "timestamp": time.time(),
+        "source": "single"
+    })
 
-        # Display matched image
-        plt.subplot(1, 2, 2)
-        plt.imshow(matched_image)
-        plt.title("Matched Image")
-        plt.axis('off')
+    return {
+        "status": "success",
+        "message": f"Image embedded using {model_version} model.",
+        "embedding_id": unique_id,
+        "image_url": image_url,
+        "embedding_vector": embedding.tolist(),
+        "processing_time_seconds": round(elapsed_time, 3)
+    }
 
-        plt.show()
+@app.post("/insert_batch_zip")
+async def insert_batch_zip(zip_file: UploadFile = File(...), model_version: str = Form("base")):
+    if zip_file.spool_max_size > 2 * 1024 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="ZIP size exceeds 2GB limit")
 
-# Usage Example
+    temp_dir = tempfile.mkdtemp()
+    zip_path = os.path.join(temp_dir, "uploaded.zip")
+
+    with open(zip_path, "wb") as f:
+        shutil.copyfileobj(zip_file.file, f)
+
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(temp_dir)
+
+    model_path = f"cnn_model/weights/{model_version}_model.h5"
+    model = load_model(model_path)
+
+    responses = []
+
+    def process_file(fpath):
+        start_time = time.time()
+        unique_id = str(uuid.uuid4())
+        image_url = f"temp/{unique_id}.jpg"
+        embedding = extract_embedding_from_file(fpath, model)
+        insert_embedding(embedding)
+        shutil.copy(fpath, image_url)
+        elapsed_time = time.time() - start_time
+        responses.append({
+            "embedding_id": unique_id,
+            "image_url": image_url,
+            "embedding_vector": embedding.tolist(),
+            "processing_time_seconds": round(elapsed_time, 3)
+        })
+
+        log_collection.insert_one({
+            "event": "insert",
+            "embedding_id": unique_id,
+            "model_version": model_version,
+            "image_url": image_url,
+            "timestamp": time.time(),
+            "source": "batch"
+        })
+
+    threads = []
+    for root, _, files in os.walk(temp_dir):
+        for fname in files:
+            if fname.lower().endswith((".jpg", ".jpeg", ".png")):
+                fpath = os.path.join(root, fname)
+                t = threading.Thread(target=process_file, args=(fpath,))
+                threads.append(t)
+                t.start()
+
+    for t in threads:
+        t.join()
+
+    db.model_usage.update_one(
+        {"model_version": model_version},
+        {"$inc": {"usage_count": len(responses)}, "$set": {"last_used": time.time()}},
+        upsert=True
+    )
+
+    return {"status": "batch_success", "count": len(responses), "results": responses}
+
+@app.get("/download_model")
+async def download_model(model_version: str = "base"):
+    model_path = f"cnn_model/weights/{model_version}_model.h5"
+    if not os.path.exists(model_path):
+        return {"error": "Model version not found."}
+    return FileResponse(model_path, filename=f"{model_version}_model.h5")
+
+@app.get("/download_embeddings")
+async def download_embeddings():
+    meta_file = "temp/metadata_log.json"
+    with open(meta_file, "w") as f:
+        f.write("[\n  // Metadata logs could go here\n]")
+    return FileResponse(meta_file, filename="metadata_log.json")
+
+@app.post("/search")
+async def search_image(file: UploadFile = File(...), top_k: int = 5, model_version: str = Form("base")):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        model_path = f"cnn_model/weights/{model_version}_model.h5"
+        model = load_model(model_path)
+        embedding = extract_embedding_from_file(tmp.name, model)
+        results = search_embedding(embedding, top_k=top_k)
+
+    matches = []
+    for hits in results:
+        for hit in hits:
+            matches.append({"id": hit.id, "distance": hit.distance})
+
+    return {
+        "query_embedding": embedding.tolist(),
+        "matches": matches
+    }
+
+@app.post("/train_model")
+async def train_custom_model(train_data_path: str = Form(...), model_version: str = Form("custom")):
+    import tensorflow as tf
+    from tensorflow.keras.preprocessing.image import ImageDataGenerator
+
+    model = build_custom_cnn()
+    datagen = ImageDataGenerator(rescale=1./255, validation_split=0.2)
+    train_gen = datagen.flow_from_directory(
+        train_data_path,
+        target_size=(640, 640),
+        batch_size=4,
+        class_mode='categorical',
+        subset='training')
+
+    val_gen = datagen.flow_from_directory(
+        train_data_path,
+        target_size=(640, 640),
+        batch_size=4,
+        class_mode='categorical',
+        subset='validation')
+
+    history = model.fit(train_gen, validation_data=val_gen, epochs=3)
+    save_path = f"cnn_model/weights/{model_version}_model.h5"
+    model.save(save_path)
+
+    db.model_training.insert_one({
+        "model_version": model_version,
+        "dataset_path": train_data_path,
+        "trained_at": time.time(),
+        "epochs": 3,
+        "samples": train_gen.samples,
+        "metrics": {
+            "loss": history.history.get("loss", []),
+            "val_loss": history.history.get("val_loss", []),
+            "accuracy": history.history.get("accuracy", []),
+            "val_accuracy": history.history.get("val_accuracy", [])
+        }
+    })
+
+    return {"status": "success", "message": f"Custom model '{model_version}' trained and saved."}
+
 if __name__ == "__main__":
-    # Local folder containing images for comparison
-    MASTER_FOLDER = '/home/ansh/train'  # Update this path
-    INPUT_IMAGE_PATH = '/home/ansh/737b2ccc-0d0e-4fd0-ab1c-74d540299a1b.jpeg'  # Update this path with your input image
-
-   
+    uvicorn.run(app, host="0.0.0.0", port=8000)
