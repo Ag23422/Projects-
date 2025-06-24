@@ -1,11 +1,11 @@
-Here is the updated `README.md` for your main **Projects** repository, with the **`intermediate`** folder section removed:
+Here’s the updated **main `README.md`** with the `jarvis/` folder added to the **Repository Structure** section. This assumes `jarvis` is another project in your GitHub repo, as you've previously discussed building it.
 
 ---
 
 ````markdown
 # Ansh Sharma — Project Portfolio
 
-This repository showcases a curated collection of my technical projects across domains such as embedded systems, drone automation, computer vision, and core programming. Each folder contains working code, documentation, and relevant assets that reflect my hands-on experience in system-level programming, AI integration, and real-world IoT deployment.
+This repository is a collection of my projects across diverse domains including embedded systems, drone automation, computer vision, machine learning, and cybersecurity. Each folder contains self-contained, functional modules that reflect my experience with real-world system integration, AI workflows, and secure communication protocols.
 
 ---
 
@@ -13,33 +13,35 @@ This repository showcases a curated collection of my technical projects across d
 
 | Folder Name        | Description |
 |--------------------|-------------|
-| [`basic/`](./tree/main/basic)              | Beginner-level programs and utilities focused on foundational concepts in Python, C, and logic building. |
-| [`drone/`](./tree/main/drone)              | Autonomous drone system with real-time ET calculation, GPS-based path planning, onboard vision, MAVLink communication, and cloud integration. |
-| [`embedded_project/`](./tree/main/embedded_project)  | Microcontroller-based real-time projects implementing sensor interfacing, motor control, and communication protocols (UART, I2C, SPI). |
+| [`basic/`](./tree/main/basic)              | Foundational programs in Python, C, and core logic building exercises. |
+| [`drone/`](./tree/main/drone)              | Autonomous drone platform with real-time ET calculation, MAVLink telemetry, vision integration, and path planning. |
+| [`embedded_project/`](./tree/main/embedded_project)  | Hardware-level microcontroller projects focusing on sensor interfacing, serial communication, and motor control. |
+| [`jarvis/`](./tree/main/jarvis)            | Modular AI assistant system with integrated orchestrator, command parser, RAG, and vision components. |
 
 ---
 
 ## Key Domains Covered
 
-- **Embedded Systems:** Bare-metal programming, sensor/actuator interfacing, power-efficient logic.
-- **Drone & Robotics:** MAVLink control, GPS navigation, failsafe mechanisms, data telemetry.
-- **Computer Vision:** Image classification, OpenCV pipelines, cloud-assisted analytics.
-- **Machine Learning:** Model training, deployment, prediction systems using TensorFlow and scikit-learn.
-- **Cloud Integration:** AWS S3 pipelines for data offloading, Lambda-based compute offloading.
+- **Embedded Systems:** Microcontroller programming, I2C/SPI/UART protocols, sensor integration.
+- **Drone & Robotics:** GPS-based navigation, MAVLink communication, image capture, and cloud sync.
+- **Computer Vision:** Image classification, stitching algorithms, OpenCV pipelines.
+- **Machine Learning:** Model training, prediction pipelines, real-time inference (scikit-learn, TensorFlow).
+- **Cybersecurity:** Secure transmission, tamper detection failsafes, and communication hardening.
+- **Cloud Integration:** AWS S3 for data management, Lambda functions for compute offloading.
+- **AI Assistants:** Intent classification, speech recognition, multi-module orchestration.
 
 ---
 
 ## Getting Started
 
-Each folder contains its own `README.md` explaining:
+Each project directory contains a dedicated `README.md` detailing:
 
-- Project Objective
-- Hardware/Software Requirements
-- Installation Instructions
-- Sample Output
-- Extension Ideas
+- Objective and Overview
+- Required Hardware/Software
+- Setup Instructions
+- Execution Flow and Outputs
 
-Feel free to clone this repository and explore any of the modules based on your interest or use case.
+Clone this repository to explore the projects:
 
 ```bash
 git clone https://github.com/Ag23422/Projects-.git
@@ -51,12 +53,13 @@ cd Projects-
 ## About Me
 
 **Ansh Sharma**
-Undergraduate | Software & Embedded Systems Enthusiast
+Undergraduate | software,Embedded Systems, Machine Learning, & Cybersecurity Enthusiast
 GitHub: [@Ag23422](https://github.com/Ag23422)
 
 ---
 
-## Licensing
+## License
 
-All projects in this repository are open-sourced under the MIT License. Attribution is appreciated if reused.
+All projects in this repository are licensed under the [MIT License](https://opensource.org/licenses/MIT). Attribution is appreciated if reused or extended.
+
 
