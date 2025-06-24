@@ -1,54 +1,191 @@
-import cv2
-import boto3
+# main_board_controller.py
 import numpy as np
+import time
+import math
+import dronekit
+import RPi.GPIO as GPIO
+import cv2  
+import boto3 
+import threading
+import tensorflow as tf
+import pandas as pd
+from io import StringIO
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics.pairwise import cosine_similarity
+from tensorflow.keras.models import load_model
+import os
 import hashlib
+from flask import Flask, jsonify, request
+from PIL import Image
+import io
 
-camera="whatever maybe the config adress in the microprosessor "
+# Flask API
+app = Flask(__name__)
 
-s3 = boto3.client('s3', 
+vehicle = dronekit.connect('udp:127.0.0.1:14550', wait_ready=True)
+location = vehicle.location.global_frame
+start_lat = location.lat
+start_lon = location.lon
+R = 6371.0
+
+
+GPIO.setmode(GPIO.BCM)
+trig = 12
+echo = 10
+GPIO.setup(trig, GPIO.OUT)
+GPIO.setup(echo, GPIO.IN)
+
+
+s3_client = boto3.client('s3', 
                           aws_access_key_id='YOUR_AWS_ACCESS_KEY',
                           aws_secret_access_key='YOUR_AWS_SECRET_KEY',
                           region_name='YOUR_AWS_REGION')
-
 bucket_name = 'your-bucket-name'
-image_name="path to the image "
 
-image= s3.generate_presigned_url('get_object',
-                                     Params={'Bucket': "bucket name ",'key':"image name "},
-                                     ExpiresIn=9000)
-bucket=bucket_name
 
-def lambda_handler(event,context):
-    bucket=bucket_name
-    unique_hashes=set()
-    response=s3.list_of_objects(Bucket=bucket,prefix='images')
-    for obj in response.get('Contents',[]):
-                   key=obj[key]
-                   image_data=s3.get_object(Bucket=bucket,key=key)['body'].read()
-                   image_hash=hashlib.md5(image_data).hexdigest
+EMBEDDING_MODEL_PATH = 'models/image_embedding_model.h5'
+REFERENCE_EMBEDDINGS_PATH = 'models/reference_embeddings.npy'
+REFERENCE_LABELS_PATH = 'models/reference_labels.npy'
+embedding_model = load_model(EMBEDDING_MODEL_PATH)
+reference_embeddings = np.load(REFERENCE_EMBEDDINGS_PATH)
+reference_labels = np.load(REFERENCE_LABELS_PATH)
 
-                   if image_hash in unique_hashes:
-                           s3.delete_obj(bucket=bucket,key=key)
-                   else:
-                           unique_hashes.add(image_hash)
 
-    stitch_images(bucket)
-    
-def stitch_images(bucket_name):
-        response=s3.list_of_objects(Bucket=bucket,prefix='images')
-        images=[]
-        for obj in response.get('Contents',[]):
-                   key=obj[key]
-                   image_data=s3.get_object(Bucket=bucket,key=key)['body'].read()
-                   nparr=np.frombuffer(image_data,np.uint8)
-                   img=cv2.imdecode[nparr,cv2.IMREAD_COLOR]
-                   images.append(img)
-        stitcher=cv2.Stitcher()
-        (status, stitched)=stitcher.stitch(images)
+current_pattern = "elliptical"  
+altitude = 15
+area_width = 63.61
+area_length = 63.61
+overlap = 0.7
 
-        if status == cv2.STITCHER_OK:
-                _,buffer=cv2.imencode('.png',stitched)
-                stitched_key= 'stitched_output.png'
-                s3.put_objects (bucket=bucket_name,key=stitched_key, body=buffer.tobytes(),ContentType='image/png')
-        else:
-            print("Image stitching failed with status: {}".format(status))
+def calculate_et(temp, humidity):
+    return 0.6108 * np.exp((17.27 * temp) / (temp + 237.3)) * humidity / 100
+
+
+data_log = []
+
+@app.route('/start_enrollment', methods=['POST'])
+def start_enrollment():
+    content = request.json
+    prefix = content.get("prefix", "captured_image")
+    if system_overloaded():
+        classify_images_with_lambda(bucket_name, prefix)
+        return jsonify({"status": "offloaded to lambda", "prefix": prefix})
+    else:
+        classify_images_from_s3(bucket_name, prefix)
+        return jsonify({"status": "processed locally", "prefix": prefix})
+
+@app.route('/list_embeddings', methods=['GET'])
+def list_embeddings():
+    return jsonify({"embeddings": reference_embeddings.tolist(), "labels": reference_labels.tolist()})
+
+@app.route('/log', methods=['POST'])
+def log_data():
+    content = request.json
+    data_log.append(content)
+    return jsonify({"status": "logged", "length": len(data_log)})
+
+
+def system_overloaded():
+    try:
+        load = os.getloadavg()[0]  # 1-min average
+        return load > 1.5
+    except:
+        return False
+
+
+def classify_images_from_s3(bucket_name, file_prefix):
+    image_data = []
+    keys = []
+    response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=file_prefix)
+    for obj in response.get("Contents", []):
+        if obj['Key'].endswith(('.jpg', '.jpeg', '.png')):
+            keys.append(obj['Key'])
+            image_obj = s3_client.get_object(Bucket=bucket_name, Key=obj['Key'])
+            arr = np.asarray(bytearray(image_obj['Body'].read()), dtype=np.uint8)
+            img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            img = cv2.resize(img, (128, 128))
+            image_data.append(img)
+
+    image_data = np.array(image_data) / 255.0
+    embeddings = embedding_model.predict(image_data)
+    similarities = cosine_similarity(embeddings, reference_embeddings)
+    predictions = [reference_labels[np.argmax(sim)] for sim in similarities]
+
+    for key, pred in zip(keys, predictions):
+        print(f"{key} classified as {pred}")
+
+
+LAMBDA_MODEL_PATH = '/tmp/model.h5'
+folder_names = ['Healthy', 'Diseased']
+
+def classify_images_with_lambda(bucket_name, prefix):
+    response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+    for obj in response.get('Contents', []):
+        key = obj['Key']
+        if not key.lower().endswith(('.png', '.jpg', '.jpeg')):
+            continue
+        image_data = s3_client.get_object(Bucket=bucket_name, Key=key)['Body'].read()
+        image = Image.open(io.BytesIO(image_data)).resize((128, 128))
+        image_array = np.array(image) / 255.0
+        image_array = image_array.reshape(1, 128, 128, 3)
+
+     
+        if not os.path.exists(LAMBDA_MODEL_PATH):
+            s3_client.download_file(bucket_name, 'models/image_embedding_model.h5', LAMBDA_MODEL_PATH)
+        lambda_model = load_model(LAMBDA_MODEL_PATH)
+
+        prediction = lambda_model.predict(image_array)
+        predicted_class_index = np.argmax(prediction, axis=1)[0]
+        predicted_label = folder_names[predicted_class_index]
+
+        print(f"[Lambda] Image: {key}, Predicted Class: {predicted_label}")
+
+if __name__ == "__main__":
+    threading.Thread(target=app.run, kwargs={"host": "0.0.0.0", "port": 5000}).start()
+    try:
+        base_location = (start_lat, start_lon)
+        semi_major_axis = 0.01  
+        semi_minor_axis = 0.005  
+        last_ellipse_time = time.time() 
+        ellipse_interval = 6 * 3600  
+
+        zigzag_lat, zigzag_lon = generate_zigzag_with_capture()
+        ellipse_lat, ellipse_lon = generate_ellipse_path(semi_major_axis, semi_minor_axis)
+
+        capture_thread = threading.Thread(target=capture_and_upload)
+        capture_thread.start() 
+
+        while True:
+            current_location = vehicle.location.global_frame
+            if is_drone_away_from_base(current_location, base_location):
+                pass
+
+            current_time = time.time()
+            if current_time - last_ellipse_time >= ellipse_interval:
+                for lat, lon in zip(ellipse_lat, ellipse_lon):
+                    avoidance()
+                    vehicle.simple_goto(lat, lon, altitude)
+                    time.sleep(1)
+                last_ellipse_time = current_time  
+
+            task = "mapping" 
+            if task == "mapping":
+                for lat, lon in zip(zigzag_lat, zigzag_lon):
+                    avoidance()
+                    vehicle.simple_goto(lat, lon, altitude)
+                    time.sleep(1)
+
+            time.sleep(0.01)
+
+    except Exception as e:
+        print(f"Program stopped due to error: {e}")
+    finally:
+        close_camera()  
+        GPIO.cleanup()
+
+        print("Classifying images from S3...")
+        classify_images_from_s3(bucket_name, file_prefix="captured_image")
+
+        print("Stitching images from S3...")
+        stitch_images_from_s3(bucket_name, file_prefix="mapped_image")
