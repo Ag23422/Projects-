@@ -1,0 +1,2 @@
+git commit --allow-empty -m "Force cache refresh"
+git push
