@@ -1,1 +1,216 @@
 
+import os
+import uuid
+import time
+import tempfile
+import logging
+import requests
+import json
+from typing import List, Dict, Optional
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import torch
+import torchaudio
+import torchaudio.transforms as T
+from fastapi import FastAPI, HTTPException, Body
+from pydantic import BaseModel
+from pymongo import MongoClient
+from dotenv import load_dotenv
+from pyannote.audio import Pipeline
+from speechbrain.pretrained import SpeakerRecognition
+from clearvoice import ClearVoice
+
+load_dotenv()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("audio-service")
+
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+DB_NAME = os.getenv("DB_NAME", "audioDB")
+COLLECTION_NAME = os.getenv("COLLECTION_NAME", "segments")
+HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
+NUM_INSTANCES = int(os.getenv("NUM_INSTANCES", 5))
+BASE_PORT = int(os.getenv("BASE_PORT", 5001))
+
+mongo_client = MongoClient(MONGO_URI)
+collection = mongo_client[DB_NAME][COLLECTION_NAME]
+
+app = FastAPI()
+pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=HUGGINGFACE_TOKEN).to("cuda")
+ecapa = SpeakerRecognition.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb")
+audio_enhancement = ClearVoice(task='speech_enhancement', model_names=['MossFormerGAN_SE_16K'])
+
+class Embedding(BaseModel):
+    vector: List[float]
+
+class Segment(BaseModel):
+    audio_id: str
+    segment_id: str
+    duration: float
+    metadata: dict
+    embedding: Embedding
+
+class SegmentListResponse(BaseModel):
+    total: int
+    segments: List[Segment]
+
+
+@app.post("/segment", status_code=201)
+def insert_segment(segment: Segment):
+    if collection.find_one({"segment_id": segment.segment_id}):
+        raise HTTPException(status_code=409, detail="Segment ID already exists.")
+    collection.insert_one(segment.dict())
+    return {"message": "Segment inserted successfully."}
+
+@app.get("/segments", response_model=SegmentListResponse)
+def get_segments(audio_id: Optional[str] = None):
+    query = {"audio_id": audio_id} if audio_id else {}
+    results = list(collection.find(query, {"_id": 0}))
+    return {"total": len(results), "segments": results}
+
+@app.delete("/delete_audio/{audio_id}")
+def delete_segments(audio_id: str):
+    result = collection.delete_many({"audio_id": audio_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="No segments found.")
+    return {"message": f"Deleted {result.deleted_count} segments."}
+
+@app.post("/diarize")
+def diarize_audio(payload: Dict = Body(...)):
+    audio_url = payload.get("audio_url")
+    min_duration = payload.get("min_duration", 1.0)
+    enhance = payload.get("enhance", False)
+    if not audio_url:
+        raise HTTPException(status_code=400, detail="Missing 'audio_url'.")
+
+    try:
+        response = requests.get(audio_url)
+        if response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to download audio.")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+            tmp.write(response.content)
+            tmp_path = tmp.name
+
+        if enhance:
+            enhanced_path = tmp_path.replace(".wav", "_enhanced.wav")
+            audio_enhancement(input_path=tmp_path, online_write=True, output_path=os.path.dirname(enhanced_path))
+            tmp_path = enhanced_path
+
+        waveform, sr = torchaudio.load(tmp_path)
+        if waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+        if sr != 16000:
+            waveform = T.Resample(orig_freq=sr, new_freq=16000)(waveform)
+            torchaudio.save(tmp_path, waveform, 16000)
+
+        diarization, embeddings = pipeline(tmp_path, return_embeddings=True)
+
+        speaker_segments = defaultdict(list)
+        for segment, _, speaker in diarization.itertracks(yield_label=True):
+            duration = float(segment.end - segment.start)
+            if duration >= min_duration:
+                seg_id = str(uuid.uuid4())
+                embedding = embeddings[segment].tolist()
+                entry = {
+                    "audio_id": os.path.basename(audio_url),
+                    "segment_id": seg_id,
+                    "duration": duration,
+                    "metadata": {
+                        "speaker": speaker,
+                        "start_time": float(segment.start),
+                        "end_time": float(segment.end)
+                    },
+                    "embedding": {"vector": embedding}
+                }
+                collection.insert_one(entry)
+                speaker_segments[speaker].append(entry["segment_id"])
+
+        os.remove(tmp_path)
+        return {"segments_by_speaker": speaker_segments}
+    except Exception as e:
+        logger.exception("Diarization failed.")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/enroll")
+def enroll_batch(payload: Dict = Body(...)):
+    entries = payload.get("input", [])
+    if not entries:
+        raise HTTPException(status_code=400, detail="Missing 'input'.")
+
+    success, failed = [], []
+    for entry in entries:
+        try:
+            diarize_audio(entry)
+            success.append(entry["audio_url"])
+        except Exception as e:
+            failed.append({"audio_url": entry.get("audio_url"), "error": str(e)})
+
+    return {"success": success, "failed": failed}
+
+@app.post("/divide_enrollment")
+def divide_enrollment(payload: Dict = Body(...)):
+    input_data = payload.get("input", [])
+    if not input_data:
+        raise HTTPException(status_code=400, detail="Missing input field.")
+
+    chunk_size = len(input_data) // NUM_INSTANCES
+    chunks = [input_data[i * chunk_size:(i + 1) * chunk_size] for i in range(NUM_INSTANCES - 1)]
+    chunks.append(input_data[(NUM_INSTANCES - 1) * chunk_size:])
+    secondary_ports = [BASE_PORT + i for i in range(NUM_INSTANCES)]
+
+    def send_request(port, chunk):
+        try:
+            resp = requests.post(f"http://localhost:{port}/enroll", json={"input": chunk})
+            if resp.status_code == 200:
+                return resp.json()
+            else:
+                return {"success": [], "failed": chunk}
+        except:
+            return {"success": [], "failed": chunk}
+
+    responses = []
+    with ThreadPoolExecutor(max_workers=NUM_INSTANCES) as executor:
+        futures = [executor.submit(send_request, port, chunk) for port, chunk in zip(secondary_ports, chunks)]
+        for future in as_completed(futures):
+            responses.append(future.result())
+
+    all_success = []
+    all_failed = []
+    for res in responses:
+        all_success.extend(res.get("success", []))
+        all_failed.extend(res.get("failed", []))
+
+    return {
+        "success": True,
+        "message": f"Enrollment complete across {NUM_INSTANCES} instances. Total successful: {len(all_success)}, Failed: {len(all_failed)}",
+        "success_entries": all_success,
+        "failed_entries": all_failed
+    }
+
+@app.post("/search")
+def search_similar_segments(payload: Dict = Body(...)):
+    query_embedding = payload.get("embedding")
+    top_k = int(payload.get("top_k", 5))
+    if not query_embedding:
+        raise HTTPException(status_code=400, detail="Missing 'embedding'.")
+
+    all_segments = list(collection.find({}, {"_id": 0, "embedding.vector": 1, "segment_id": 1, "audio_id": 1, "duration": 1, "metadata": 1}))
+
+    def cosine_similarity(a, b):
+        a = torch.tensor(a)
+        b = torch.tensor(b)
+        return torch.nn.functional.cosine_similarity(a.unsqueeze(0), b.unsqueeze(0)).item()
+
+    scored = []
+    for seg in all_segments:
+        sim = cosine_similarity(query_embedding, seg["embedding"]["vector"])
+        seg["score"] = sim
+        scored.append(seg)
+
+    top_segments = sorted(scored, key=lambda x: x["score"], reverse=True)[:top_k]
+    return {"matches": top_segments}
+
+if __name__ == '__main__':
+    import uvicorn
+    uvicorn.run(app, host='0.0.0.0', port=5000)
+
