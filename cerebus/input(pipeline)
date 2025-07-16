@@ -1,0 +1,168 @@
+import wave 
+import os 
+import struct
+import sys
+import numpy as np
+import math
+from scipy.fftpack import dct
+
+def record_microphone(filename="input.wav",duration=5, rate=16000, channels=1):
+    print(f"recording {duration} seconds...")
+
+    command=f"arecord -D plughw:0,7 -q -t wav -f S16_LE -c {channels} -r {rate} -d {duration} {filename}"
+    os.system(command)
+
+    print(f"Recording done ")
+def read_wave(filename="input.wav"):
+    with wave.open(filename, 'rb') as wf:
+        n_channels=wf.getnchannels()
+        sample_width=wf.getsampwidth()
+        framerate=wf.getframerate()
+        n_frames=wf.getnframes()
+        raw_data=wf.readframes(n_frames)
+        samples=np.frombuffer(raw_data, dtype=np.int16)
+    return samples/np.max(np.abs(samples)),framerate
+def pre_emphasis(signal,alpha=0.7):
+    return np.append(signal[0],signal[1:]-alpha *signal[:-1])
+def framing(samples,rate,frame_size_ms=25,frame_stride_ms=10):
+    frame_size=int(rate*frame_size_ms /1000)
+    frame_stride=int(rate*frame_stride_ms / 1000)
+    num_frames=int((len(samples)-frame_size)/frame_stride)+1
+
+    frames=np.zeros((num_frames,frame_size))
+    for i in range(num_frames):
+        start=i*frame_stride
+        frames[i]=samples[start:start+frame_size]
+    return frames
+def frequency_gate(frames,threshold=1e-4,NFFT=512):
+    fft_frames=np.fft.rfft(frames,n=NFFT)
+    magnitude=np.abs(fft_frames)
+    fft_frames[magnitude<threshold]=0
+    return np.fft.irfft(fft_frames,n=NFFT)[:,:frames.shape[1]]
+def spectral_sub(frames, noise_estimate,NFFT=512):
+    noise_fft=np.fft.rfft(noise_estimate,n=NFFT)
+    noise_mag=np.abs(noise_fft)
+
+    enhanced_frames=[]
+    for frame in frames:
+        frame_fft=np.fft.rfft(frame,n=NFFT)
+        frame_mag=np.abs(frame_fft)
+        frame_phase=np.angle(frame_fft)
+
+        clean_mag=np.maximum(frame_mag - noise_mag,0)
+        enhanced_fft=clean_mag*np.exp(1j *frame_phase)
+        enhanced_frame=np.fft.irfft(enhanced_fft,n=NFFT)
+        enhanced_frames.append(enhanced_frame[:len(frame)])
+    return np.array(enhanced_frames)
+
+def energy_mask(frames, threshold_ratio=0.08):
+    energy = np.sum(frames**2,axis=1)
+    max_energy= np.max(energy)
+    return frames[energy>threshold_ratio *max_energy]
+
+def voice_node_filter(frames,low=0.02,high=0.95):
+    energy= np.sum(frames**2,axis=1)
+    norm= energy/np.max(energy)
+    return frames[(norm>=low)&(norm<=high)]
+def reconstruct_signal(frames,stride_samples):
+    if len(frames.shape)!=2:
+        print("frames skipped")
+        return frames
+    num_frames,frame_len=frames.shape
+    output_len=stride_samples*(frames.shape[0]-1)+frames.shape[1]
+    output=np.zeros(output_len)
+    
+    for i,frame in enumerate(frames):
+        start=i*stride_samples
+        output[start:start+frame_len]+=frame
+    return output
+def hybrid_denoise(signal,rate=16000):
+    emphasized=pre_emphasis(signal)
+    frames=framing(emphasized,rate)
+    masked=energy_mask(frames)
+    if masked.shape[0]==0:
+        print("not 2D")
+        return signal
+
+    voiced=voice_node_filter(masked)
+    if voiced.shape[0]==0:
+        print("all frames removed")
+        voiced=masked
+    num_est=max(1,int(0.1*len(frames)))
+    energy=np.sum(frames**2,axis=1)
+    low_energy_indices=np.argsort(energy)[:num_est]
+    noise_estimate=np.mean(frames[low_energy_indices],axis=0)
+
+    voiced=spectral_sub(voiced,noise_estimate)
+    voiced=frequency_gate(voiced)
+
+    return reconstruct_signal(voiced,stride_samples=int(rate*0.01))
+
+def save(filename,samples,rate):
+    max_amp=np.max(np.abs(samples))
+    if max_amp<1e-5:
+        print("silence detected . Skipping save.")
+        return
+    samples=(samples/max_amp*32767).astype(np.int16)
+
+    with wave.open(filename,'w') as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(rate)
+        wf.writeframes(samples.tobytes())
+
+def apply_hamming(frames):
+    hamming=np.hamming(frames.shape[1])
+    return frames*hamming 
+def compute_fft(frames, NFFT=512):
+    mag=np.abs(np.fft.rfft(frames,n=NFFT))
+    pow_spec=(1/NFFT)*(mag**2)
+    return pow_spec
+def hz_to_mel(hz):
+    return 2595*np.log10(1+hz/700)
+def mel_to_hz(mel):
+    return 700*(10**(mel / 2595)-1)
+def get_mel_filterbank(num_filters=26,NFFT=512,rate=16000):
+    low_mel=hz_to_mel(0)
+    high_mel=hz_to_mel(rate/2)
+    mel_points=np.linspace(low_mel,high_mel,num_filters+2)
+    hz_points=mel_to_hz(mel_points)
+    bin_points=np.floor((NFFT+1)*hz_points/rate).astype(int)
+
+    fbank=np.zeros((num_filters,NFFT//2 +1))
+    for i in range(1,num_filters+1):
+        left=bin_points[i-1]
+        center=bin_points[i]
+        right=bin_points[i+1]
+
+        for k in range(left,center):
+            fbank[i-1,k]=(k-left)/(center-left)
+        for k in range(center,right):
+            fbank[i-1,k]=(right-k)/(right-center)
+    return fbank
+def compute_mfcc(signal,rate,num_filters=26,num_ceps=13,NFFT=512):
+    frames=framing(signal,rate)
+    frames=apply_hamming(frames)
+    pow_spec=compute_fft(frames,NFFT)
+
+    fbank=get_mel_filterbank(num_filters,NFFT,rate)
+    mel_energy=np.dot(pow_spec,fbank.T)
+    mel_energy=np.where(mel_energy==0,np.finfo(float).eps,mel_energy)
+    log_mel=np.log(mel_energy)
+
+    mfcc=dct(log_mel,type=2,axis=1,norm='ortho')
+    return mfcc[:,:num_ceps]
+
+
+
+if __name__=="__main__":
+    record_microphone()
+    raw_wave,rate=read_wave("input.wav")
+    denoised_wave=hybrid_denoise(raw_wave,rate)
+
+    save("denoised.wav",denoised_wave,rate)
+    print("denoised audio saved")
+
+    mfcc_features=compute_mfcc(denoised_wave,rate)
+    print("mfcc shape: ",mfcc_features.shape)
+    print("first frame mfcc(13-d): ",mfcc_features[0])
