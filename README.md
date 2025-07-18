@@ -62,6 +62,6 @@ GitHub: [@Ag23422](https://github.com/Ag23422)
 
 ## License
 
-All projects in this repository are licensed under the [MIT License](https://opensource.org/licenses/MIT). Attribution is appreciated if reused or extended.
+All projects in this repository are licensed under the [MIT License](./LICENSE ).Attribution is appreciated if reused or extended.
 
 
