@@ -1,3 +1,12 @@
+#tommorow:
+    #speach of the bot 
+    #api calling left
+#day after tommorow:
+    #frontend collaboration
+    #backend finalising
+#finalisation
+
+
 import wave 
 import os 
 import struct
@@ -5,6 +14,13 @@ import sys
 import numpy as np
 import math
 from scipy.fftpack import dct
+import csv
+
+import platform
+
+MFCC_CSV="mfcc_db.csv"
+
+
 
 def record_microphone(filename="input.wav",duration=5, rate=16000, channels=1):
     print(f"recording {duration} seconds...")
@@ -153,16 +169,102 @@ def compute_mfcc(signal,rate,num_filters=26,num_ceps=13,NFFT=512):
     mfcc=dct(log_mel,type=2,axis=1,norm='ortho')
     return mfcc[:,:num_ceps]
 
+def mean_mfcc_vector(mfcc_matrix):
+    return np.mean(mfcc_matrix,axis=0).tolist()
 
+def append(phrase,mfcc_vector,path=MFCC_CSV):
+    file_exists=os.path.exists(path)
+    with open(path, mode="a",newline='') as f:
+        writer=csv.writer(f)
+        if not file_exists:
+            writer.writerow(["phrase"]+[f"mfcc_{i+1}"for i in range(len(mfcc_vector))])
+        writer.writerow([phrase]+mfcc_vector)
+
+def load_data(path=MFCC_CSV):
+    db={}
+    if not os.path.exists(path):
+        return db 
+    with open(path,newline='') as f:
+        reader=csv.reader(f)
+        header=next(reader)
+        for row in reader:
+            phrase=row[0]
+            mfcc=list(map(float,row[1:]))
+            if phrase not in db:
+                db[phrase]=[]
+            db[phrase].append(mfcc)
+    return db
+
+def cosine_sim(vec1,vec2):
+    dot=sum(a*b for a, b in zip(vec1,vec2))
+    norm1=math.sqrt(sum(a*a for a in vec1))
+    norm2=math.sqrt(sum(b*b for b in vec2))
+    if norm1 ==0 or norm2==0:
+        return 0
+    return dot/(norm1*norm2)
+
+def recognizer(input_vector,db_path=MFCC_CSV):
+    best_match=None
+    best_score=-1
+
+    with open(db_path,'r') as f:
+        reader =csv.reader(f)
+        next(reader)
+        for row in reader:
+            stored_vec=list(map(float,row[1:]))
+            label=row[0]
+            sim=cosine_sim(input_vector,stored_vec)
+            if sim>best_score:
+                best_score=sim
+                best_match=label
+    return best_match,best_score
+
+
+def execute(phrase):
+    if "chrome" in phrase.lower() :
+        if platform.system()=="Windows":
+            os.system("start chrome ")
+        elif platform.system()=="Linux":
+            os.system("google-chrome &")
+    elif "shutdown" in phrase.lower():
+        if platform.system()=="Windows":
+            os.system("shutdown /s /t 1")
+        elif platform.system() =="Linux":
+            os.system("shutdown now")
 
 if __name__=="__main__":
-    record_microphone()
-    raw_wave,rate=read_wave("input.wav")
-    denoised_wave=hybrid_denoise(raw_wave,rate)
+    while True:
 
-    save("denoised.wav",denoised_wave,rate)
-    print("denoised audio saved")
+        record_microphone()
+        raw_wave,rate=read_wave("input.wav")
+        denoised_wave=hybrid_denoise(raw_wave,rate)
 
-    mfcc_features=compute_mfcc(denoised_wave,rate)
-    print("mfcc shape: ",mfcc_features.shape)
-    print("first frame mfcc(13-d): ",mfcc_features[0])
+        save("denoised.wav",denoised_wave,rate)
+        print("denoised audio saved")
+
+        mfcc_features=compute_mfcc(denoised_wave,rate)
+        if mfcc_features.shape[0]==0:
+            print("no valid MFCC")
+            continue
+
+        mfcc_vector=mean_mfcc_vector(mfcc_features)
+        if os.path.exists(MFCC_CSV) and os.path.getsize(MFCC_CSV)>0:
+            match,score=recognizer(mfcc_vector)
+            print(f"predicted: {match}(Score:{score:.3f})")
+
+            if score>=0.85:
+                print(f"Executing command: {match}")
+                execute(match)
+
+            else:
+                phrase=input("Unrecognized . enter the phrase:")
+                append(phrase,mfcc_vector)
+                print("done and updated")
+                
+        else:    
+                phrase=input("enter the phrase:")
+                append(phrase,mfcc_vector)
+                print("done")
+
+        # print("mfcc shape: ",mfcc_features.shape)
+        # print("first frame mfcc(13-d): ",mfcc_features[0])
